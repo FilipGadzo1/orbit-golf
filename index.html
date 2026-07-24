@@ -43,6 +43,7 @@
             <div class="panel icon-bar">
               <button class="icon-btn" id="btn-multi" title="Multiplayer (M)">👥</button>
               <button class="icon-btn" id="btn-stats" title="Career stats (T)">📊</button>
+              <button class="icon-btn" id="btn-shop" title="Cosmetics shop">✦</button>
               <button class="icon-btn" id="btn-settings" title="Settings (Esc)">⚙</button>
             </div>
           </div>
@@ -78,6 +79,7 @@
             <button class="btn btn-primary" id="btn-play">Play solo</button>
             <button class="btn" id="btn-play-multi">Play with friends</button>
             <button class="btn btn-ghost" id="btn-title-stats">Career stats</button>
+            <button class="btn btn-ghost" id="btn-title-shop">Cosmetics shop</button>
             <button class="btn btn-ghost" id="btn-title-settings">Settings</button>
           </div>
           <div class="seed-row">
@@ -272,6 +274,28 @@
           <footer class="sheet-foot">
             <button class="btn btn-ghost btn-danger" id="btn-reset-stats">Reset career</button>
             <button class="btn btn-primary" id="btn-close-stats-2">Done</button>
+          </footer>
+        </div>
+      </div>
+
+      <!-- ============================ cosmetics shop ========================== -->
+      <div id="shop" class="overlay hidden">
+        <div class="panel sheet sheet-narrow">
+          <header class="sheet-head">
+            <h2>Cosmetics Shop</h2>
+            <button class="icon-btn" id="btn-close-shop">✕</button>
+          </header>
+          <div class="sheet-body">
+            <section>
+              <div class="field">
+                <span>Balance</span>
+                <span class="balance" id="shop-balance">✦ 0</span>
+              </div>
+              <div class="shop-list" id="shop-list"></div>
+            </section>
+          </div>
+          <footer class="sheet-foot">
+            <button class="btn btn-primary" id="btn-close-shop-2">Done</button>
           </footer>
         </div>
       </div>

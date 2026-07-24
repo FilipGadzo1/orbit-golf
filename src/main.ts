@@ -14,7 +14,7 @@ import {
   type KnownPlayer,
 } from './game/friends';
 import { loadSettings, randomName, saveSettings, type Settings } from './game/settings';
-import { awardFor, grant, loadCosmetics, saveCosmetics } from './game/cosmetics';
+import { awardFor, buy, equip, grant, loadCosmetics, saveCosmetics, SKINS } from './game/cosmetics';
 import {
   ACHIEVEMENTS,
   averageStrokes,
@@ -75,6 +75,9 @@ const els = {
   achCount: $('ach-count'),
   achToasts: $('ach-toasts'),
   friendList: $<HTMLUListElement>('friend-list'),
+  shop: $('shop'),
+  shopBalance: $('shop-balance'),
+  shopList: $('shop-list'),
 };
 
 let toastTimer = 0;
@@ -87,7 +90,7 @@ function toast(message: string): void {
 
 // ------------------------------------------------------------------ screens
 
-type Screen = 'title' | 'game' | 'result' | 'settings' | 'multi' | 'stats';
+type Screen = 'title' | 'game' | 'result' | 'settings' | 'multi' | 'stats' | 'shop';
 let inGame = false;
 
 function show(el: HTMLElement, visible: boolean): void {
@@ -100,8 +103,10 @@ function openScreen(screen: Screen): void {
   show(els.settings, screen === 'settings');
   show(els.multi, screen === 'multi');
   show(els.stats, screen === 'stats');
+  show(els.shop, screen === 'shop');
   show(els.hud, inGame);
   if (screen === 'stats') renderStats();
+  if (screen === 'shop') renderShop();
   if (screen === 'multi') updateMultiConfigNotice();
   canvas.style.cursor = screen === 'game' ? 'crosshair' : 'default';
 }
@@ -704,6 +709,64 @@ const closeStats = () => {
 };
 $('btn-close-stats').addEventListener('click', closeStats);
 $('btn-close-stats-2').addEventListener('click', closeStats);
+
+function renderShop(): void {
+  els.shopBalance.textContent = `✦ ${cosmetics.balance}`;
+  els.shopList.innerHTML = '';
+  for (const skin of SKINS) {
+    const owned = cosmetics.owned.includes(skin.id);
+    const equipped = cosmetics.equipped === skin.id;
+    const row = document.createElement('div');
+    row.className = 'shop-row';
+    const swatch = document.createElement('span');
+    swatch.className = 'shop-swatch';
+    swatch.style.background = `radial-gradient(circle at 35% 35%, ${skin.body[0]}, ${skin.body[1]})`;
+    const label = document.createElement('span');
+    label.className = 'shop-name';
+    label.textContent = skin.name;
+    const action = document.createElement('button');
+    action.className = 'btn';
+    if (equipped) {
+      action.textContent = 'Equipped';
+      action.disabled = true;
+    } else if (owned) {
+      action.textContent = 'Equip';
+      action.addEventListener('click', () => {
+        equip(cosmetics, skin.id);
+        saveCosmetics(cosmetics);
+        game.net.setSkin(cosmetics.equipped); // no-op offline; wired in Task 7
+        sfx.ui();
+        renderShop();
+      });
+    } else {
+      action.textContent = `Buy ✦${skin.price}`;
+      action.disabled = cosmetics.balance < skin.price;
+      action.addEventListener('click', () => {
+        if (buy(cosmetics, skin.id)) {
+          saveCosmetics(cosmetics);
+          sfx.ui();
+          renderShop();
+        }
+      });
+    }
+    row.append(swatch, label, action);
+    els.shopList.appendChild(row);
+  }
+}
+
+const openShop = () => {
+  sfx.ui();
+  openScreen('shop');
+};
+$('btn-shop').addEventListener('click', openShop);
+$('btn-title-shop').addEventListener('click', openShop);
+
+const closeShop = () => {
+  sfx.ui(false);
+  openScreen(backgroundScreen());
+};
+$('btn-close-shop').addEventListener('click', closeShop);
+$('btn-close-shop-2').addEventListener('click', closeShop);
 
 $('btn-reset-stats').addEventListener('click', () => {
   if (!confirm('Reset all career stats and achievements? This cannot be undone.')) return;

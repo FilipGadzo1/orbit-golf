@@ -466,6 +466,13 @@ export class RealtimeClient {
     this.lastPosSent = now;
     this.transport?.broadcast('pos', { id: this.selfId, x, y, state } satisfies PosPayload);
   }
+
+  /**
+   * Temporary no-op stub for Task 5 (cosmetics shop UI), so the shop's equip handler has
+   * something to call. Task 7 replaces the body with the real broadcast of the equipped
+   * skin id; it must stay a pure no-op until then — no touching election/advancement/presence.
+   */
+  setSkin(_id: string): void {}
 }
 
 function asMeta(x: unknown): PresenceMeta {
