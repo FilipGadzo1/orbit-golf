@@ -1,4 +1,5 @@
 import './styles.css';
+import { music } from './audio/music';
 import { sfx } from './audio/sfx';
 import { hashString } from './core/rng';
 import { Game, type HoleResult } from './game/game';
@@ -129,6 +130,8 @@ function backgroundScreen(): Screen {
 
 function startGame(seedText?: string): void {
   sfx.unlock();
+  music.unlock();
+  if (settings.musicVolume > 0) music.start();
   const raw = (seedText ?? els.seedInput.value).trim();
   const seed = raw ? (/^\d+$/.test(raw) ? Number(raw) >>> 0 : hashString(raw)) : undefined;
   inGame = true;
@@ -275,6 +278,14 @@ bindToggle('set-shake', 'screenShake');
 bindToggle('set-names', 'showGhostNames');
 
 bindRange('set-volume', 'volume', (v) => `${Math.round(v * 100)}%`, 'volume-readout');
+$<HTMLInputElement>('set-music').value = String(settings.musicVolume);
+$('music-readout').textContent = `${Math.round(settings.musicVolume * 100)}%`;
+$<HTMLInputElement>('set-music').addEventListener('input', (e) => {
+  settings.musicVolume = Number((e.target as HTMLInputElement).value);
+  $('music-readout').textContent = `${Math.round(settings.musicVolume * 100)}%`;
+  music.setVolume(settings.musicVolume);
+  saveSettings(settings);
+});
 bindRange('set-aim', 'aimAssist', (v) => (v === 0 ? 'off' : `${v.toFixed(1)}s`), 'aim-readout');
 bindRange('set-gravity', 'gravityIntensity', (v) => `${Math.round(v * 100)}%`, 'gravity-readout');
 bindRange('set-hue', 'hue', (v) => String(Math.round(v)));
@@ -319,6 +330,8 @@ $('btn-random-room').addEventListener('click', () => {
 
 $('btn-join').addEventListener('click', () => {
   sfx.unlock();
+  music.unlock();
+  if (settings.musicVolume > 0) music.start();
   const room = els.roomInput.value.trim().toUpperCase();
   if (!room) {
     toast('Enter a room code first');

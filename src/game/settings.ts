@@ -2,6 +2,7 @@ export interface Settings {
   playerName: string;
   hue: number;
   volume: number;
+  musicVolume: number;
   soundEnabled: boolean;
   /** Seconds of predicted flight drawn by the aim guide. 0 = off. */
   aimAssist: number;
@@ -21,6 +22,7 @@ const DEFAULTS: Settings = {
   playerName: '',
   hue: Math.floor(Math.random() * 360),
   volume: 0.6,
+  musicVolume: 0.35,
   soundEnabled: true,
   aimAssist: 2.5,
   gravityIntensity: 1,
