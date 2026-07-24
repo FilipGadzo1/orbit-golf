@@ -70,6 +70,13 @@ The dotted line is a real forward simulation of your shot — not an approximati
 it accounts for every gravity well and bounce. Its colour tells you the predicted
 outcome: **green** sinks it, **blue** is still flying, **orange** leaves the map,
 **red** hits a black hole. Shorten or disable it in Settings if it makes things too easy.
+Settings also has a **colorblind mode**, which swaps that palette for a colorblind-safe
+one and adds short end-of-line labels (SINK/FLY/OUT/HOLE) so the outcome never depends on
+colour alone.
+
+There's a low-volume ambient music bed, runtime-synthesised like the sound effects (no
+audio files to ship). It has its own **Music** volume slider in Settings, independent of
+the SFX volume, so you can run them at different levels or mute either one.
 
 ## Course generation
 
@@ -139,6 +146,17 @@ hole 30). Locked ones show a progress bar; unlocks pop a toast as they happen.
 
 "Reset career" in the stats footer wipes stats and achievements after a confirmation.
 
+## Stardust and cosmetics
+
+Finishing a hole earns **Stardust**, a local currency scaled by how well you played —
+sinking under par pays more, an ace pays a big bonus, and conceding a hole still earns a
+small consolation amount. Spend it in the **Cosmetics Shop**, opened from the HUD icon bar
+or the title screen, on ball skins: different body colours, glow and ghost-ring accents,
+priced from free (the default Classic skin) up to the priciest, Champion Gold. Whatever
+skin you have equipped restyles your own ball and is also shown to other players, so your
+ghost is recognisable in a crowd. Like career stats, this is entirely device-local
+(`localStorage`, no accounts, no server) — there's nothing to cheat but your own wallet.
+
 ## Recent players
 
 A full friend list needs accounts, auth and a database, and the room server is
@@ -184,7 +202,7 @@ verify the lobby, host controls, config propagation, start, ghosts, kick, and ad
 ```
 src/
   core/      seeded RNG, vector maths
-  game/      generator, physics, settings, stats, friends, the Game orchestrator
+  game/      generator, physics, settings, stats, friends, cosmetics, the Game orchestrator
   render/    camera, starfield, gravity field, particles, draw routines
   net/       Supabase Realtime client, transport abstraction, shared types
   audio/     runtime-synthesised sound effects (no audio assets)
@@ -194,5 +212,5 @@ scripts/     test runners
 
 ## Not built yet
 
-Music, accounts and a real cross-device friend list, per-course leaderboards, replays,
-and mobile UI polish beyond the basics.
+Accounts and a real cross-device friend list, per-course leaderboards, replays, and
+mobile UI polish beyond the basics.
