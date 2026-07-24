@@ -35,6 +35,7 @@ check('birdie', awardFor({ strokes: 2, par: 3, outcome: 'sunk' }) === 10 + 20);
 check('bogey small', awardFor({ strokes: 4, par: 3, outcome: 'sunk' }) === 10 + 5);
 check('double bogey base only', awardFor({ strokes: 5, par: 3, outcome: 'sunk' }) === 10);
 check('conceded consolation', awardFor({ strokes: 6, par: 3, outcome: 'lost' }) === 2);
+check('albatross+ace pays top tier', awardFor({ strokes: 1, par: 4, outcome: 'sunk' }) === 10 + 50 + 25);
 
 // --- catalog + defaults -----------------------------------------------------
 {

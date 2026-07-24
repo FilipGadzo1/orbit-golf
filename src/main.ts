@@ -300,6 +300,7 @@ bindToggle('set-colorblind', 'colorblind');
 bindRange('set-volume', 'volume', (v) => `${Math.round(v * 100)}%`, 'volume-readout');
 $<HTMLInputElement>('set-music').value = String(settings.musicVolume);
 $('music-readout').textContent = `${Math.round(settings.musicVolume * 100)}%`;
+music.volume = settings.musicVolume;
 $<HTMLInputElement>('set-music').addEventListener('input', (e) => {
   settings.musicVolume = Number((e.target as HTMLInputElement).value);
   $('music-readout').textContent = `${Math.round(settings.musicVolume * 100)}%`;
