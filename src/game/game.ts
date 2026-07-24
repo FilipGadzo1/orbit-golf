@@ -697,7 +697,7 @@ export class Game {
       points = r.points;
       outcome = r.outcome;
     }
-    drawAim(ctx, this.cam, this.ball.pos, points, outcome, power, dir, timeSec);
+    drawAim(ctx, this.cam, this.ball.pos, points, outcome, power, dir, timeSec, this.settings.colorblind);
   }
 
   private drawStatus(ctx: CanvasRenderingContext2D, w: number, _h: number): void {

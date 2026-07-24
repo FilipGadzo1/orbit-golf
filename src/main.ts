@@ -276,6 +276,7 @@ bindToggle('set-orbits', 'showOrbits');
 bindToggle('set-trail', 'showTrail');
 bindToggle('set-shake', 'screenShake');
 bindToggle('set-names', 'showGhostNames');
+bindToggle('set-colorblind', 'colorblind');
 
 bindRange('set-volume', 'volume', (v) => `${Math.round(v * 100)}%`, 'volume-readout');
 $<HTMLInputElement>('set-music').value = String(settings.musicVolume);

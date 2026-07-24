@@ -14,6 +14,7 @@ export interface Settings {
   /** 0 = potato, 1 = balanced, 2 = pretty. */
   quality: number;
   screenShake: boolean;
+  colorblind: boolean;
 }
 
 const KEY = 'orbit-golf.settings.v1';
@@ -32,6 +33,7 @@ const DEFAULTS: Settings = {
   autoCamera: true,
   quality: 2,
   screenShake: true,
+  colorblind: false,
 };
 
 const ADJECTIVES = ['Cosmic', 'Lunar', 'Solar', 'Astro', 'Nebula', 'Quantum', 'Orbital', 'Stellar'];

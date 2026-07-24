@@ -21,6 +21,18 @@ const OUTCOME_COLOR: Record<string, string> = {
   stop: 'rgba(190, 205, 230, ',
 };
 
+// Higher-contrast, CVD-distinguishable alternates, keyed the same as OUTCOME_COLOR.
+const OUTCOME_COLOR_CB: Record<string, string> = {
+  open: 'rgba(80, 160, 255, ',   // blue
+  sunk: 'rgba(255, 255, 255, ',  // white
+  lost: 'rgba(255, 176, 0, ',    // amber
+  crush: 'rgba(0, 0, 0, ',       // black core (still visible via the dotted glow)
+  stop: 'rgba(150, 150, 150, ',
+};
+const OUTCOME_LABEL: Record<string, string> = {
+  open: 'FLY', sunk: 'SINK', lost: 'OUT', crush: 'HOLE', stop: 'STOP',
+};
+
 export function drawBody(ctx: CanvasRenderingContext2D, cam: Camera, b: Body, time: number): void {
   const s = cam.worldToScreen(b.pos);
   const r = b.radius * cam.zoom;
@@ -295,8 +307,10 @@ export function drawAim(
   power: number,
   aimDir: Vec,
   time: number,
+  colorblind: boolean,
 ): void {
-  const base = OUTCOME_COLOR[outcome] ?? OUTCOME_COLOR.open;
+  const palette = colorblind ? OUTCOME_COLOR_CB : OUTCOME_COLOR;
+  const base = palette[outcome] ?? palette.open;
   ctx.save();
 
   // Predicted path as marching dots — spacing conveys speed.
@@ -356,6 +370,20 @@ export function drawAim(
   ctx.arc(o.x, o.y, 18, -Math.PI / 2, -Math.PI / 2 + power * Math.PI * 2);
   ctx.stroke();
   ctx.restore();
+
+  if (colorblind && points.length) {
+    const end = cam.worldToScreen(points[points.length - 1]);
+    ctx.save();
+    ctx.font = '700 12px ui-sans-serif, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.lineWidth = 3;
+    const txt = OUTCOME_LABEL[outcome] ?? '';
+    ctx.strokeText(txt, end.x, end.y - 14);
+    ctx.fillText(txt, end.x, end.y - 14);
+    ctx.restore();
+  }
 }
 
 /** Screen-edge chevron pointing at an off-screen world point. */
