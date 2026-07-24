@@ -1,0 +1,729 @@
+import './styles.css';
+import { sfx } from './audio/sfx';
+import { hashString } from './core/rng';
+import { Game, type HoleResult } from './game/game';
+import { tierFor } from './game/generator';
+import {
+  forgetPlayer,
+  loadFriends,
+  relativeTime,
+  rememberPlayers,
+  saveFriends,
+  toggleStar,
+  type KnownPlayer,
+} from './game/friends';
+import { loadSettings, randomName, saveSettings, type Settings } from './game/settings';
+import {
+  ACHIEVEMENTS,
+  averageStrokes,
+  formatDistance,
+  formatDuration,
+  resetStats,
+  saveStats,
+  underPar,
+  type Achievement,
+} from './game/stats';
+import type { NetStatus } from './net/client';
+import type { PlayerInfo } from './net/protocol';
+
+const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
+  const el = document.getElementById(id);
+  if (!el) throw new Error(`Missing element #${id}`);
+  return el as T;
+};
+
+const settings: Settings = loadSettings();
+const canvas = $<HTMLCanvasElement>('stage');
+const game = new Game(canvas, settings);
+
+const els = {
+  hud: $('hud'),
+  title: $('title'),
+  result: $('result'),
+  settings: $('settings'),
+  multi: $('multi'),
+  toast: $('toast'),
+  hole: $('hud-hole'),
+  par: $('hud-par'),
+  strokes: $('hud-strokes'),
+  total: $('hud-total'),
+  tier: $('hud-tier'),
+  scoreboard: $('scoreboard'),
+  scoreList: $<HTMLUListElement>('score-list'),
+  roomLabel: $('room-label'),
+  netDot: $('net-dot'),
+  netLine: $('net-line'),
+  lobbyList: $<HTMLUListElement>('lobby-list'),
+  seedInput: $<HTMLInputElement>('seed-input'),
+  roomInput: $<HTMLInputElement>('room-input'),
+  progressLine: $('progress-line'),
+  stats: $('stats'),
+  statGrid: $('stat-grid'),
+  scorecard: $('scorecard'),
+  achGrid: $('ach-grid'),
+  achCount: $('ach-count'),
+  achToasts: $('ach-toasts'),
+  friendList: $<HTMLUListElement>('friend-list'),
+};
+
+let toastTimer = 0;
+function toast(message: string): void {
+  els.toast.textContent = message;
+  els.toast.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => els.toast.classList.add('hidden'), 2800);
+}
+
+// ------------------------------------------------------------------ screens
+
+type Screen = 'title' | 'game' | 'result' | 'settings' | 'multi' | 'stats';
+let inGame = false;
+
+function show(el: HTMLElement, visible: boolean): void {
+  el.classList.toggle('hidden', !visible);
+}
+
+function openScreen(screen: Screen): void {
+  show(els.title, screen === 'title');
+  show(els.result, screen === 'result');
+  show(els.settings, screen === 'settings');
+  show(els.multi, screen === 'multi');
+  show(els.stats, screen === 'stats');
+  show(els.hud, inGame);
+  if (screen === 'stats') renderStats();
+  canvas.style.cursor = screen === 'game' ? 'crosshair' : 'default';
+}
+
+/** Where closing a sheet should return you to. */
+function backgroundScreen(): Screen {
+  return pendingResult ? 'result' : inGame ? 'game' : 'title';
+}
+
+function startGame(seedText?: string): void {
+  sfx.unlock();
+  const raw = (seedText ?? els.seedInput.value).trim();
+  const seed = raw ? (/^\d+$/.test(raw) ? Number(raw) >>> 0 : hashString(raw)) : undefined;
+  inGame = true;
+  game.newCourse(seed);
+  game.start();
+  openScreen('game');
+  toast('Drag from the ball and release to putt');
+}
+
+/** Idles a randomly generated system behind the menu so the title screen isn't dead space. */
+function startAttractLoop(): void {
+  game.newCourse();
+  game.start();
+  game.viewAll();
+}
+
+// ---------------------------------------------------------------- title menu
+
+$('btn-play').addEventListener('click', () => {
+  sfx.ui();
+  startGame();
+});
+
+$('btn-play-multi').addEventListener('click', () => {
+  sfx.ui();
+  if (!inGame) {
+    inGame = true;
+    game.newCourse();
+    game.start();
+  }
+  openScreen('multi');
+});
+
+$('btn-title-settings').addEventListener('click', () => {
+  sfx.ui();
+  openScreen('settings');
+});
+
+$('btn-reroll').addEventListener('click', () => {
+  sfx.ui();
+  els.seedInput.value = String((Math.random() * 0xffffffff) >>> 0);
+});
+
+// -------------------------------------------------------------- HUD buttons
+
+$('btn-zoom-in').addEventListener('click', () => game.zoomBy(1.3));
+$('btn-zoom-out').addEventListener('click', () => game.zoomBy(1 / 1.3));
+$('btn-view-all').addEventListener('click', () => game.viewAll());
+$('btn-recenter').addEventListener('click', () => game.recenter());
+$('btn-settings').addEventListener('click', () => {
+  sfx.ui();
+  openScreen('settings');
+});
+$('btn-multi').addEventListener('click', () => {
+  sfx.ui();
+  openScreen('multi');
+});
+
+// ------------------------------------------------------------- result card
+
+let pendingResult: HoleResult | null = null;
+
+game.onHoleComplete = (r) => {
+  pendingResult = r;
+  // Let the sink animation and particles breathe before the card lands.
+  setTimeout(() => {
+    if (!pendingResult) return;
+    $('result-label').textContent = r.label;
+    $('result-title').textContent = `Hole ${r.hole} ${r.outcome === 'sunk' ? 'complete' : 'conceded'}`;
+    $('result-strokes').textContent = String(r.strokes);
+    $('result-par').textContent = String(r.par);
+    $('result-total').textContent = String(r.total);
+    const nextTier = tierFor(r.hole + 1);
+    $('result-next').textContent =
+      game.net.connected
+        ? 'Waiting for the rest of the lobby…'
+        : `Up next: hole ${r.hole + 1} · ${nextTier}`;
+    $<HTMLButtonElement>('btn-next').textContent = game.net.connected ? 'Ready' : 'Next hole';
+    // The hole is already scored with the lobby — replaying it would rewrite that score.
+    show($('btn-retry'), !game.net.connected);
+    openScreen('result');
+  }, r.outcome === 'sunk' ? 900 : 200);
+};
+
+$('btn-next').addEventListener('click', () => {
+  sfx.ui();
+  pendingResult = null;
+  game.nextHole();
+  openScreen('game');
+});
+
+$('btn-retry').addEventListener('click', () => {
+  sfx.ui();
+  pendingResult = null;
+  game.restartHole();
+  openScreen('game');
+});
+
+// ------------------------------------------------------------------ settings
+
+function bindToggle(id: string, key: keyof Settings): void {
+  const el = $<HTMLInputElement>(id);
+  el.checked = Boolean(settings[key]);
+  el.addEventListener('change', () => {
+    (settings[key] as boolean) = el.checked;
+    commitSettings();
+  });
+}
+
+function bindRange(id: string, key: keyof Settings, format: (v: number) => string, readoutId?: string): void {
+  const el = $<HTMLInputElement>(id);
+  el.value = String(settings[key]);
+  const readout = readoutId ? $(readoutId) : null;
+  const sync = () => {
+    if (readout) readout.textContent = format(Number(el.value));
+  };
+  sync();
+  el.addEventListener('input', () => {
+    (settings[key] as number) = Number(el.value);
+    sync();
+    if (key === 'hue') $('hue-swatch').style.background = `hsl(${settings.hue}, 90%, 62%)`;
+    commitSettings();
+  });
+}
+
+function commitSettings(): void {
+  saveSettings(settings);
+  game.applySettings(settings);
+}
+
+const nameInput = $<HTMLInputElement>('set-name');
+nameInput.value = settings.playerName;
+nameInput.addEventListener('change', () => {
+  settings.playerName = nameInput.value.trim() || randomName();
+  nameInput.value = settings.playerName;
+  commitSettings();
+});
+
+bindToggle('set-sound', 'soundEnabled');
+bindToggle('set-autocam', 'autoCamera');
+bindToggle('set-orbits', 'showOrbits');
+bindToggle('set-trail', 'showTrail');
+bindToggle('set-shake', 'screenShake');
+bindToggle('set-names', 'showGhostNames');
+
+bindRange('set-volume', 'volume', (v) => `${Math.round(v * 100)}%`, 'volume-readout');
+bindRange('set-aim', 'aimAssist', (v) => (v === 0 ? 'off' : `${v.toFixed(1)}s`), 'aim-readout');
+bindRange('set-gravity', 'gravityIntensity', (v) => `${Math.round(v * 100)}%`, 'gravity-readout');
+bindRange('set-hue', 'hue', (v) => String(Math.round(v)));
+$('hue-swatch').style.background = `hsl(${settings.hue}, 90%, 62%)`;
+
+const qualitySelect = $<HTMLSelectElement>('set-quality');
+qualitySelect.value = String(settings.quality);
+qualitySelect.addEventListener('change', () => {
+  settings.quality = Number(qualitySelect.value);
+  commitSettings();
+});
+
+const closeSettings = () => {
+  sfx.ui(false);
+  openScreen(backgroundScreen());
+};
+$('btn-close-settings').addEventListener('click', closeSettings);
+$('btn-close-settings-2').addEventListener('click', closeSettings);
+
+$('btn-quit').addEventListener('click', () => {
+  sfx.ui(false);
+  game.net.disconnect();
+  inGame = false;
+  pendingResult = null;
+  // Bank the run before leaving so a good streak counts toward the best-run record.
+  game.bankRun();
+  saveStats(game.stats);
+  refreshProgress();
+  openScreen('title');
+  startAttractLoop();
+});
+
+// --------------------------------------------------------------- multiplayer
+
+const ROOM_WORDS = ['NEBULA', 'PULSAR', 'QUASAR', 'COMET', 'ORBIT', 'VECTOR', 'ECLIPSE', 'APOGEE'];
+
+els.roomInput.value = new URLSearchParams(location.search).get('room')?.toUpperCase() ?? '';
+
+$('btn-random-room').addEventListener('click', () => {
+  els.roomInput.value = `${ROOM_WORDS[Math.floor(Math.random() * ROOM_WORDS.length)]}${Math.floor(Math.random() * 90 + 10)}`;
+});
+
+$('btn-join').addEventListener('click', () => {
+  sfx.unlock();
+  const room = els.roomInput.value.trim().toUpperCase();
+  if (!room) {
+    toast('Enter a room code first');
+    return;
+  }
+  if (!inGame) {
+    inGame = true;
+    game.newCourse();
+    game.start();
+  }
+  els.netLine.textContent = 'Connecting…';
+  els.netLine.dataset.status = 'connecting';
+  // The first person into a room fixes the seed; later joiners inherit it.
+  game.net.connect(room, settings.playerName, settings.hue, game.seed);
+});
+
+$('btn-leave').addEventListener('click', () => {
+  sfx.ui(false);
+  game.net.disconnect();
+  els.netLine.textContent = 'Not connected.';
+  delete els.netLine.dataset.status;
+  els.lobbyList.innerHTML = '';
+  renderScoreboard([]);
+});
+
+$('btn-close-multi').addEventListener('click', () => {
+  sfx.ui(false);
+  openScreen(inGame ? 'game' : 'title');
+});
+
+game.onNetStatus = (status: NetStatus, detail?: string) => {
+  els.netDot.dataset.status = status;
+  if (status === 'online') {
+    els.netLine.textContent = `Connected to room ${game.net.room}. Share the code and this page's URL.`;
+    els.netLine.dataset.status = 'online';
+  } else if (status === 'error') {
+    els.netLine.textContent = detail ?? 'Connection failed.';
+    els.netLine.dataset.status = 'error';
+    toast('Could not reach the game server');
+  } else if (status === 'offline') {
+    els.netLine.textContent = 'Not connected.';
+    delete els.netLine.dataset.status;
+  }
+};
+
+function renderScoreboard(players: PlayerInfo[]): void {
+  const connected = game.net.connected && players.length > 0;
+  show(els.scoreboard, connected);
+  els.roomLabel.textContent = connected ? game.net.room : 'Solo';
+  if (!connected) return;
+
+  const sorted = [...players].sort((a, b) => a.total + a.strokes - (b.total + b.strokes));
+  els.scoreList.innerHTML = '';
+  for (const p of sorted) {
+    const li = document.createElement('li');
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.style.background = `hsl(${p.hue}, 95%, 68%)`;
+    const name = document.createElement('span');
+    name.className = `name${p.id === game.net.selfId ? ' you' : ''}`;
+    name.textContent = p.name;
+    const num = document.createElement('span');
+    num.className = `num${p.done ? ' done' : ''}`;
+    num.textContent = p.done ? `✓ ${p.strokes}` : String(p.strokes);
+    li.append(chip, name, num);
+    els.scoreList.append(li);
+  }
+}
+
+game.onPlayersChanged = (players) => {
+  renderScoreboard(players);
+
+  // Remember everyone but yourself as a recent player.
+  const others = players.filter((p) => p.id !== game.net.selfId);
+  if (game.net.room && others.length > 0) {
+    friends = rememberPlayers(friends, others, game.net.room, friendsSeenThisSession);
+    saveFriends(friends);
+    renderFriends();
+  }
+
+  els.lobbyList.innerHTML = '';
+  for (const p of players) {
+    const li = document.createElement('li');
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.style.background = `hsl(${p.hue}, 95%, 68%)`;
+    const name = document.createElement('span');
+    name.textContent = `${p.name}${p.id === game.net.selfId ? ' (you)' : ''}`;
+    li.append(chip, name);
+    els.lobbyList.append(li);
+  }
+};
+
+// -------------------------------------------------------------- career stats
+
+function tile(value: string, label: string, accent?: 'accent' | 'blue' | 'warn'): HTMLElement {
+  const el = document.createElement('div');
+  el.className = 'stat-tile';
+  if (accent) el.dataset.accent = accent;
+  const v = document.createElement('span');
+  v.className = 'stat-value';
+  v.textContent = value;
+  const l = document.createElement('span');
+  l.className = 'stat-label';
+  l.textContent = label;
+  el.append(v, l);
+  return el;
+}
+
+function scoreRow(name: string, count: number, max: number, color: string): HTMLElement {
+  const row = document.createElement('div');
+  row.className = 'score-row';
+  const n = document.createElement('span');
+  n.className = 'score-name';
+  n.textContent = name;
+  const bar = document.createElement('span');
+  bar.className = 'score-bar';
+  const fill = document.createElement('span');
+  fill.className = 'score-fill';
+  fill.style.width = `${max > 0 ? (count / max) * 100 : 0}%`;
+  fill.style.background = color;
+  bar.append(fill);
+  const num = document.createElement('span');
+  num.className = 'score-num';
+  num.textContent = String(count);
+  row.append(n, bar, num);
+  return row;
+}
+
+function renderStats(): void {
+  const s = game.stats;
+  const avg = averageStrokes(s);
+  const relPar = s.bestRun ? s.bestRun.relPar : 0;
+
+  els.statGrid.innerHTML = '';
+  els.statGrid.append(
+    tile(String(s.furthestHole), 'Furthest hole', 'blue'),
+    tile(String(s.holesCompleted), 'Holes sunk', 'accent'),
+    tile(String(s.aces), 'Holes in one', 'accent'),
+    tile(String(underPar(s)), 'Under par'),
+    tile(avg > 0 ? avg.toFixed(2) : '—', 'Avg strokes'),
+    tile(String(s.bestStreak), 'Best streak', 'warn'),
+    tile(
+      s.bestRun ? `${relPar > 0 ? '+' : ''}${relPar}` : '—',
+      s.bestRun ? `Best run · ${s.bestRun.holes} holes` : 'Best run',
+      s.bestRun && relPar <= 0 ? 'accent' : undefined,
+    ),
+    tile(String(s.shots), 'Shots taken'),
+    tile(formatDistance(s.totalDistance), 'Units travelled'),
+    tile(formatDistance(s.longestShot), 'Longest shot'),
+    tile(String(s.bounces), 'Bounces'),
+    tile(String(s.ballsLost + s.ballsCrushed + s.timesAdrift), 'Balls lost', 'warn'),
+    tile(String(s.ballsCrushed), 'Black holes'),
+    tile(String(s.multiplayerHoles), 'With friends'),
+    tile(formatDuration(s.playTime), 'Time played'),
+    tile(String(s.coursesStarted), 'Courses'),
+  );
+
+  const rows: [string, number, string][] = [
+    ['Hole in one', s.aces, '#4dffb0'],
+    ['Albatross', s.albatrosses, '#5fe0c0'],
+    ['Eagle', s.eagles, '#67d3ff'],
+    ['Birdie', s.birdies, '#7aa8ff'],
+    ['Par', s.pars, '#9aa7c8'],
+    ['Bogey', s.bogeys, '#ffb066'],
+    ['Double+', s.worse, '#ff6b8b'],
+    ['Conceded', s.holesConceded, '#7b6a86'],
+  ];
+  const max = Math.max(1, ...rows.map((r) => r[1]));
+  els.scorecard.innerHTML = '';
+  for (const [name, count, color] of rows) els.scorecard.append(scoreRow(name, count, max, color));
+
+  const unlockedCount = ACHIEVEMENTS.filter((a) => s.achievements[a.id]).length;
+  els.achCount.textContent = `${unlockedCount} / ${ACHIEVEMENTS.length}`;
+  els.achGrid.innerHTML = '';
+  for (const a of ACHIEVEMENTS) {
+    const unlocked = Boolean(s.achievements[a.id]);
+    const el = document.createElement('div');
+    el.className = `ach ${unlocked ? 'unlocked' : 'locked'}`;
+
+    const icon = document.createElement('span');
+    icon.className = 'ach-icon';
+    icon.textContent = a.icon;
+
+    const body = document.createElement('div');
+    body.className = 'ach-body';
+    const name = document.createElement('div');
+    name.className = 'ach-name';
+    name.textContent = a.name;
+    const desc = document.createElement('div');
+    desc.className = 'ach-desc';
+    desc.textContent = a.description;
+    body.append(name, desc);
+
+    if (!unlocked) {
+      const done = Math.min(a.progress(s), a.goal);
+      if (done > 0) {
+        const bar = document.createElement('div');
+        bar.className = 'ach-progress';
+        const fill = document.createElement('span');
+        fill.style.width = `${(done / a.goal) * 100}%`;
+        bar.append(fill);
+        body.append(bar);
+      }
+    }
+
+    el.append(icon, body);
+    el.title = unlocked
+      ? `Unlocked ${new Date(s.achievements[a.id]).toLocaleDateString()}`
+      : `${Math.floor(Math.min(a.progress(s), a.goal))} / ${a.goal}`;
+    els.achGrid.append(el);
+  }
+}
+
+const openStats = () => {
+  sfx.ui();
+  openScreen('stats');
+};
+$('btn-stats').addEventListener('click', openStats);
+$('btn-title-stats').addEventListener('click', openStats);
+
+const closeStats = () => {
+  sfx.ui(false);
+  openScreen(backgroundScreen());
+};
+$('btn-close-stats').addEventListener('click', closeStats);
+$('btn-close-stats-2').addEventListener('click', closeStats);
+
+$('btn-reset-stats').addEventListener('click', () => {
+  if (!confirm('Reset all career stats and achievements? This cannot be undone.')) return;
+  game.stats = resetStats();
+  renderStats();
+  refreshProgress();
+  toast('Career reset');
+});
+
+// Achievement unlock toasts, shown one at a time so they don't stack into a wall.
+game.onAchievements = (unlocked: Achievement[]) => {
+  unlocked.forEach((a, i) => {
+    setTimeout(() => {
+      sfx.levelUp();
+      const el = document.createElement('div');
+      el.className = 'ach-toast';
+      const icon = document.createElement('span');
+      icon.className = 'ach-icon';
+      icon.textContent = a.icon;
+      const body = document.createElement('div');
+      const kicker = document.createElement('div');
+      kicker.className = 'ach-kicker';
+      kicker.textContent = 'Achievement unlocked';
+      const name = document.createElement('div');
+      name.className = 'ach-name';
+      name.textContent = a.name;
+      body.append(kicker, name);
+      el.append(icon, body);
+      els.achToasts.append(el);
+      setTimeout(() => {
+        el.classList.add('out');
+        setTimeout(() => el.remove(), 400);
+      }, 4200);
+    }, i * 700);
+  });
+};
+
+// ------------------------------------------------------------- recent players
+
+let friends: KnownPlayer[] = loadFriends();
+/** Names already counted this session, so the meeting tally doesn't inflate. */
+const friendsSeenThisSession = new Set<string>();
+
+function renderFriends(): void {
+  els.friendList.innerHTML = '';
+  if (friends.length === 0) {
+    const note = document.createElement('li');
+    note.className = 'empty-note';
+    note.textContent = 'Nobody yet — join a room with a friend and they will show up here.';
+    note.style.background = 'transparent';
+    els.friendList.append(note);
+    return;
+  }
+
+  for (const f of friends) {
+    const li = document.createElement('li');
+    if (f.starred) li.classList.add('starred');
+
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.style.background = `hsl(${f.hue}, 95%, 68%)`;
+
+    const main = document.createElement('div');
+    main.className = 'friend-main';
+    const name = document.createElement('span');
+    name.className = 'friend-name';
+    name.textContent = f.name;
+    const meta = document.createElement('span');
+    meta.className = 'friend-meta';
+    meta.textContent = `${f.meetings} session${f.meetings === 1 ? '' : 's'} · ${f.lastRoom} · ${relativeTime(f.lastSeen)}`;
+    main.append(name, meta);
+
+    const star = document.createElement('button');
+    star.className = `friend-btn star${f.starred ? ' on' : ''}`;
+    star.textContent = f.starred ? '★' : '☆';
+    star.title = f.starred ? 'Unpin' : 'Pin as friend';
+    star.addEventListener('click', () => {
+      friends = toggleStar(friends, f.key);
+      saveFriends(friends);
+      renderFriends();
+      sfx.ui();
+    });
+
+    const join = document.createElement('button');
+    join.className = 'friend-btn friend-join';
+    join.textContent = 'Join';
+    join.title = `Rejoin ${f.lastRoom}`;
+    join.addEventListener('click', () => {
+      els.roomInput.value = f.lastRoom;
+      $('btn-join').click();
+    });
+
+    const forget = document.createElement('button');
+    forget.className = 'friend-btn';
+    forget.textContent = '✕';
+    forget.title = 'Forget';
+    forget.addEventListener('click', () => {
+      friends = forgetPlayer(friends, f.key);
+      saveFriends(friends);
+      renderFriends();
+      sfx.ui(false);
+    });
+
+    li.append(chip, main, join, star, forget);
+    els.friendList.append(li);
+  }
+}
+
+// -------------------------------------------------------------------- input
+
+window.addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+  switch (e.key.toLowerCase()) {
+    case 'escape':
+      if (!els.settings.classList.contains('hidden')) closeSettings();
+      else if (!els.stats.classList.contains('hidden')) closeStats();
+      else if (!els.multi.classList.contains('hidden')) openScreen(backgroundScreen());
+      else if (inGame) openScreen('settings');
+      break;
+    case 't':
+      if (els.stats.classList.contains('hidden')) openStats();
+      else closeStats();
+      break;
+    case 'f':
+      if (inGame) game.viewAll();
+      break;
+    case 'c':
+      if (inGame) game.recenter();
+      break;
+    case 'r':
+      if (inGame && els.result.classList.contains('hidden')) {
+        game.restartHole();
+        toast(game.net.connected ? 'Hole restarted · +1 penalty stroke' : 'Hole restarted');
+      }
+      break;
+    case 'm':
+      if (inGame) openScreen('multi');
+      break;
+    case 'n':
+      if (inGame && !els.result.classList.contains('hidden')) {
+        pendingResult = null;
+        game.nextHole();
+        openScreen('game');
+      }
+      break;
+    case 'x':
+      if (inGame && els.result.classList.contains('hidden')) game.skipHole();
+      break;
+    case '+':
+    case '=':
+      if (inGame) game.zoomBy(1.25);
+      break;
+    case '-':
+      if (inGame) game.zoomBy(1 / 1.25);
+      break;
+  }
+});
+
+// --------------------------------------------------------------- HUD ticker
+
+function refreshProgress(): void {
+  const s = game.stats;
+  if (!s.holesPlayed) {
+    els.progressLine.textContent = 'No holes played yet. Every course is generated from a seed.';
+    return;
+  }
+  const bits = [
+    `furthest hole ${s.furthestHole}`,
+    `${s.holesCompleted} sunk`,
+    s.aces > 0 ? `${s.aces} ace${s.aces === 1 ? '' : 's'}` : null,
+    `${ACHIEVEMENTS.filter((a) => s.achievements[a.id]).length}/${ACHIEVEMENTS.length} achievements`,
+  ].filter(Boolean);
+  els.progressLine.textContent = bits.join(' · ');
+}
+
+function tickHud(): void {
+  if (inGame) {
+    const h = game.hud();
+    els.hole.textContent = String(h.hole);
+    els.par.textContent = String(h.par);
+    els.strokes.textContent = String(h.strokes);
+    els.total.textContent = String(h.total);
+    els.tier.textContent = h.tier;
+    els.tier.dataset.tier = h.tier;
+    els.netDot.dataset.status = h.netStatus;
+  }
+  requestAnimationFrame(tickHud);
+}
+
+// Handle for the automated browser smoke test; harmless in normal play.
+(window as unknown as { __game: Game }).__game = game;
+
+refreshProgress();
+renderFriends();
+openScreen('title');
+tickHud();
+startAttractLoop();
+
+// Bank play time and the current run if the tab is closed mid-game.
+window.addEventListener('pagehide', () => {
+  game.bankRun();
+  saveStats(game.stats);
+});
+
+// Deep link: ?room=CODE opens straight into the multiplayer sheet.
+if (new URLSearchParams(location.search).get('room')) {
+  inGame = true;
+  openScreen('multi');
+}

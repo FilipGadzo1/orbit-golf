@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="theme-color" content="#04060f" />
+    <title>Orbit Golf — minigolf in space</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Orbitron:wght@600;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='30' fill='%234dffb0'/><circle cx='40' cy='40' r='8' fill='%23052e20'/></svg>" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="stage"></canvas>
+
+      <!-- ============================ in-game HUD ============================ -->
+      <div id="hud" class="hidden">
+        <div class="hud-row hud-top">
+          <div class="panel hud-card" id="hole-card">
+            <div class="hud-hole">
+              <span class="label">Hole</span>
+              <span class="value" id="hud-hole">1</span>
+            </div>
+            <div class="divider"></div>
+            <div class="hud-stat"><span class="label">Par</span><span class="value" id="hud-par">3</span></div>
+            <div class="hud-stat"><span class="label">Strokes</span><span class="value accent" id="hud-strokes">0</span></div>
+            <div class="hud-stat"><span class="label">Total</span><span class="value" id="hud-total">0</span></div>
+            <div class="divider"></div>
+            <span class="tier" id="hud-tier">Easy</span>
+          </div>
+
+          <div class="hud-right">
+            <div class="panel icon-bar">
+              <button class="icon-btn" id="btn-zoom-in" title="Zoom in (+)">+</button>
+              <button class="icon-btn" id="btn-zoom-out" title="Zoom out (−)">−</button>
+              <button class="icon-btn" id="btn-view-all" title="View whole course (F)">⛶</button>
+              <button class="icon-btn" id="btn-recenter" title="Recenter on ball (C)">◎</button>
+            </div>
+            <div class="panel icon-bar">
+              <button class="icon-btn" id="btn-multi" title="Multiplayer (M)">👥</button>
+              <button class="icon-btn" id="btn-stats" title="Career stats (T)">📊</button>
+              <button class="icon-btn" id="btn-settings" title="Settings (Esc)">⚙</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="hud-row hud-bottom">
+          <div class="panel scoreboard hidden" id="scoreboard">
+            <div class="scoreboard-head">
+              <span id="room-label">Solo</span>
+              <span class="net-dot" id="net-dot"></span>
+            </div>
+            <ul id="score-list"></ul>
+          </div>
+
+          <div class="hint-bar panel" id="hint-bar">
+            <span><b>Drag</b> from the ball &amp; release to putt</span>
+            <span class="sep"></span>
+            <span><b>Wheel</b> zoom</span>
+            <span class="sep"></span>
+            <span><b>Right-drag</b> pan</span>
+            <span class="sep"></span>
+            <span><b>R</b> retry hole</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================ title screen =========================== -->
+      <div id="title" class="overlay">
+        <div class="title-inner">
+          <h1 class="game-title">ORBIT<span>GOLF</span></h1>
+          <p class="tagline">Minigolf across procedurally generated solar systems.<br />Slingshot around gravity wells. Don't miss.</p>
+          <div class="menu">
+            <button class="btn btn-primary" id="btn-play">Play solo</button>
+            <button class="btn" id="btn-play-multi">Play with friends</button>
+            <button class="btn btn-ghost" id="btn-title-stats">Career stats</button>
+            <button class="btn btn-ghost" id="btn-title-settings">Settings</button>
+          </div>
+          <div class="seed-row">
+            <label for="seed-input">Course seed</label>
+            <input id="seed-input" type="text" inputmode="numeric" placeholder="random" autocomplete="off" />
+            <button class="btn btn-mini" id="btn-reroll">Reroll</button>
+          </div>
+          <p class="progress-line" id="progress-line"></p>
+        </div>
+      </div>
+
+      <!-- ========================== hole complete card ======================= -->
+      <div id="result" class="overlay hidden">
+        <div class="panel result-card">
+          <span class="result-label" id="result-label">Par</span>
+          <h2 id="result-title">Hole 1 complete</h2>
+          <div class="result-stats">
+            <div><span class="label">Strokes</span><span class="value" id="result-strokes">3</span></div>
+            <div><span class="label">Par</span><span class="value" id="result-par">3</span></div>
+            <div><span class="label">Total</span><span class="value" id="result-total">3</span></div>
+          </div>
+          <div class="result-next" id="result-next"></div>
+          <div class="result-actions">
+            <button class="btn btn-primary" id="btn-next">Next hole</button>
+            <button class="btn btn-ghost" id="btn-retry">Replay hole</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================== settings ============================= -->
+      <div id="settings" class="overlay hidden">
+        <div class="panel sheet">
+          <header class="sheet-head">
+            <h2>Settings</h2>
+            <button class="icon-btn" id="btn-close-settings">✕</button>
+          </header>
+          <div class="sheet-body">
+            <section>
+              <h3>Player</h3>
+              <label class="field">
+                <span>Name</span>
+                <input id="set-name" type="text" maxlength="18" />
+              </label>
+              <label class="field">
+                <span>Ball colour</span>
+                <input id="set-hue" type="range" min="0" max="359" step="1" />
+                <span class="swatch" id="hue-swatch"></span>
+              </label>
+            </section>
+
+            <section>
+              <h3>Audio</h3>
+              <label class="field toggle">
+                <span>Sound effects</span>
+                <input id="set-sound" type="checkbox" />
+              </label>
+              <label class="field">
+                <span>Volume</span>
+                <input id="set-volume" type="range" min="0" max="1" step="0.01" />
+                <span class="readout" id="volume-readout">60%</span>
+              </label>
+            </section>
+
+            <section>
+              <h3>Assists</h3>
+              <label class="field">
+                <span>Aim guide</span>
+                <input id="set-aim" type="range" min="0" max="6" step="0.5" />
+                <span class="readout" id="aim-readout">2.5s</span>
+              </label>
+              <label class="field">
+                <span>Gravity visuals</span>
+                <input id="set-gravity" type="range" min="0" max="1.6" step="0.05" />
+                <span class="readout" id="gravity-readout">100%</span>
+              </label>
+              <label class="field toggle"><span>Auto camera</span><input id="set-autocam" type="checkbox" /></label>
+              <label class="field toggle"><span>Show orbit paths</span><input id="set-orbits" type="checkbox" /></label>
+              <label class="field toggle"><span>Show ball trail</span><input id="set-trail" type="checkbox" /></label>
+            </section>
+
+            <section>
+              <h3>Display</h3>
+              <label class="field">
+                <span>Quality</span>
+                <select id="set-quality">
+                  <option value="0">Performance</option>
+                  <option value="1">Balanced</option>
+                  <option value="2">Pretty</option>
+                </select>
+              </label>
+              <label class="field toggle"><span>Screen shake</span><input id="set-shake" type="checkbox" /></label>
+              <label class="field toggle"><span>Ghost name tags</span><input id="set-names" type="checkbox" /></label>
+            </section>
+          </div>
+          <footer class="sheet-foot">
+            <button class="btn btn-ghost" id="btn-quit">Back to menu</button>
+            <button class="btn btn-primary" id="btn-close-settings-2">Done</button>
+          </footer>
+        </div>
+      </div>
+
+      <!-- ============================ multiplayer ============================ -->
+      <div id="multi" class="overlay hidden">
+        <div class="panel sheet sheet-narrow">
+          <header class="sheet-head">
+            <h2>Play with friends</h2>
+            <button class="icon-btn" id="btn-close-multi">✕</button>
+          </header>
+          <div class="sheet-body">
+            <p class="muted">
+              Everyone in a room plays the same generated course and sees each other's balls as ghosts.
+              Share the room code — and this page's address — with your friends.
+            </p>
+            <label class="field">
+              <span>Room code</span>
+              <input id="room-input" type="text" maxlength="12" placeholder="e.g. NEBULA" autocomplete="off" />
+              <button class="btn btn-mini" id="btn-random-room">Random</button>
+            </label>
+            <div class="multi-actions">
+              <button class="btn btn-primary" id="btn-join">Join room</button>
+              <button class="btn btn-ghost" id="btn-leave">Leave</button>
+            </div>
+            <p class="net-line" id="net-line">Not connected.</p>
+            <ul class="lobby-list" id="lobby-list"></ul>
+
+            <section class="recent-section">
+              <h3>Recent players</h3>
+              <p class="muted small">
+                Everyone you've shared a room with, saved on this device. Star someone to pin
+                them, or jump straight back into the last room you played together.
+              </p>
+              <ul class="friend-list" id="friend-list"></ul>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================ career stats =========================== -->
+      <div id="stats" class="overlay hidden">
+        <div class="panel sheet">
+          <header class="sheet-head">
+            <h2>Career</h2>
+            <button class="icon-btn" id="btn-close-stats">✕</button>
+          </header>
+          <div class="sheet-body">
+            <div class="stat-grid" id="stat-grid"></div>
+
+            <section>
+              <h3>Scorecard</h3>
+              <div class="scorecard" id="scorecard"></div>
+            </section>
+
+            <section>
+              <h3>Achievements <span class="muted-inline" id="ach-count"></span></h3>
+              <div class="ach-grid" id="ach-grid"></div>
+            </section>
+          </div>
+          <footer class="sheet-foot">
+            <button class="btn btn-ghost btn-danger" id="btn-reset-stats">Reset career</button>
+            <button class="btn btn-primary" id="btn-close-stats-2">Done</button>
+          </footer>
+        </div>
+      </div>
+
+      <div id="toast" class="toast hidden"></div>
+      <div id="ach-toasts" class="ach-toasts"></div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

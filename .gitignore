@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# oh-my-claudecode orchestration state
+.omc/
+
+# stray test bundle output
+tmp.mjs
