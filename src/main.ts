@@ -14,6 +14,7 @@ import {
   type KnownPlayer,
 } from './game/friends';
 import { loadSettings, randomName, saveSettings, type Settings } from './game/settings';
+import { awardFor, grant, loadCosmetics, saveCosmetics } from './game/cosmetics';
 import {
   ACHIEVEMENTS,
   averageStrokes,
@@ -35,6 +36,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
 };
 
 const settings: Settings = loadSettings();
+const cosmetics = loadCosmetics();
 const canvas = $<HTMLCanvasElement>('stage');
 const game = new Game(canvas, settings);
 
@@ -196,6 +198,12 @@ let pendingResult: HoleResult | null = null;
 
 game.onHoleComplete = (r) => {
   pendingResult = r;
+  if (r.outcome === 'sunk' || r.outcome === 'skipped') {
+    const reward = awardFor({ strokes: r.strokes, par: r.par, outcome: r.outcome === 'sunk' ? 'sunk' : 'lost' });
+    grant(cosmetics, reward);
+    saveCosmetics(cosmetics);
+    showStardustToast(reward);
+  }
   // Let the sink animation and particles breathe before the card lands.
   setTimeout(() => {
     if (!pendingResult) return;
@@ -704,6 +712,29 @@ $('btn-reset-stats').addEventListener('click', () => {
   refreshProgress();
   toast('Career reset');
 });
+
+/** Stardust reward toast — mirrors the achievement-unlock toast DOM/class pattern exactly. */
+function showStardustToast(amount: number): void {
+  const el = document.createElement('div');
+  el.className = 'ach-toast stardust';
+  const icon = document.createElement('span');
+  icon.className = 'ach-icon';
+  icon.textContent = '✦';
+  const body = document.createElement('div');
+  const kicker = document.createElement('div');
+  kicker.className = 'ach-kicker';
+  kicker.textContent = 'Stardust earned';
+  const name = document.createElement('div');
+  name.className = 'ach-name';
+  name.textContent = `+${amount}`;
+  body.append(kicker, name);
+  el.append(icon, body);
+  els.achToasts.append(el);
+  setTimeout(() => {
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 400);
+  }, 2600);
+}
 
 // Achievement unlock toasts, shown one at a time so they don't stack into a wall.
 game.onAchievements = (unlocked: Achievement[]) => {

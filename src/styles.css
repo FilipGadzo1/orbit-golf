@@ -1256,6 +1256,15 @@ body {
   font-weight: 700;
 }
 
+.ach-toast.stardust {
+  border-color: rgba(242, 193, 78, 0.45);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5), 0 0 24px rgba(242, 193, 78, 0.14);
+}
+
+.ach-toast.stardust .ach-kicker {
+  color: #f2c14e;
+}
+
 /* ------------------------------------------------------------------ toast */
 
 .toast {
