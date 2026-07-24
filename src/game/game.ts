@@ -140,6 +140,8 @@ export class Game {
   /** Fired when the game phase flips (lobby<->playing) so the shell can switch screens. */
   onPhaseChange: (phase: RoomPhase) => void = () => {};
   onKicked: (reason: string) => void = () => {};
+  /** Skin style for the local ball; set by main.ts from the cosmetics module. */
+  ballSkin: { body: [string, string]; glow: string } = { body: ['#ffffff', '#9fc4e8'], glow: 'rgba(190, 235, 255, 0.5)' };
 
   // Career stats
   stats: Stats = loadStats();
@@ -653,7 +655,7 @@ export class Game {
     }
 
     if (this.settings.showTrail) drawTrail(ctx, this.cam, this.ball.trail);
-    drawBall(ctx, this.cam, this.ball, timeSec);
+    drawBall(ctx, this.cam, this.ball, timeSec, this.ballSkin);
 
     if (this.aiming && this.canShoot) this.drawAimGuide(ctx, timeSec);
 

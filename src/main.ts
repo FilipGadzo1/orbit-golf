@@ -14,7 +14,7 @@ import {
   type KnownPlayer,
 } from './game/friends';
 import { loadSettings, randomName, saveSettings, type Settings } from './game/settings';
-import { awardFor, buy, equip, grant, loadCosmetics, saveCosmetics, SKINS } from './game/cosmetics';
+import { awardFor, buy, equip, grant, loadCosmetics, saveCosmetics, skinById, SKINS } from './game/cosmetics';
 import {
   ACHIEVEMENTS,
   averageStrokes,
@@ -37,6 +37,12 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
 
 const settings: Settings = loadSettings();
 const cosmetics = loadCosmetics();
+
+function applyEquippedSkin(): void {
+  const sk = skinById(cosmetics.equipped);
+  game.ballSkin = { body: sk.body, glow: sk.glow };
+}
+applyEquippedSkin();
 const canvas = $<HTMLCanvasElement>('stage');
 const game = new Game(canvas, settings);
 
@@ -734,6 +740,7 @@ function renderShop(): void {
       action.addEventListener('click', () => {
         equip(cosmetics, skin.id);
         saveCosmetics(cosmetics);
+        applyEquippedSkin();
         game.net.setSkin(cosmetics.equipped); // no-op offline; wired in Task 7
         sfx.ui();
         renderShop();

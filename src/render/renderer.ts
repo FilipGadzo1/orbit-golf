@@ -238,21 +238,27 @@ export function drawTrail(ctx: CanvasRenderingContext2D, cam: Camera, trail: Vec
   ctx.restore();
 }
 
-export function drawBall(ctx: CanvasRenderingContext2D, cam: Camera, ball: Ball, time: number): void {
+export function drawBall(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  ball: Ball,
+  time: number,
+  skin: { body: [string, string]; glow: string },
+): void {
   if (ball.state === 'lost') return;
   const s = cam.worldToScreen(ball.pos);
   const r = Math.max(3.2, ball.radius * cam.zoom);
 
   const glowR = r * 4;
   const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, glowR);
-  g.addColorStop(0, 'rgba(190, 235, 255, 0.5)');
+  g.addColorStop(0, skin.glow);
   g.addColorStop(1, 'rgba(120, 200, 255, 0)');
   ctx.fillStyle = g;
   ctx.fillRect(s.x - glowR, s.y - glowR, glowR * 2, glowR * 2);
 
   const body = ctx.createRadialGradient(s.x - r * 0.35, s.y - r * 0.4, r * 0.1, s.x, s.y, r);
-  body.addColorStop(0, '#ffffff');
-  body.addColorStop(1, '#9fc4e8');
+  body.addColorStop(0, skin.body[0]);
+  body.addColorStop(1, skin.body[1]);
   ctx.fillStyle = body;
   ctx.beginPath();
   ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
