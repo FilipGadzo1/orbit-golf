@@ -26,7 +26,7 @@ export const DEFAULT_ROOM_CONFIG: RoomConfig = {
 /** Rooms sit in a waiting lobby until the host starts the game. */
 export type RoomPhase = 'lobby' | 'playing';
 
-/** Everything a client needs to render room-level state, sent on any change. */
+/** Everything the game needs to render room-level state. */
 export interface RoomState {
   phase: RoomPhase;
   hole: number;
@@ -35,24 +35,47 @@ export interface RoomState {
   players: PlayerInfo[];
 }
 
-export type ClientMsg =
-  | { t: 'join'; room: string; name: string; hue: number; seed?: number }
-  | { t: 'pos'; x: number; y: number; state: string }
-  | { t: 'stroke'; strokes: number }
-  | { t: 'done'; strokes: number; result: 'sunk' | 'lost' }
-  | { t: 'ready' }
-  // Host-only actions — the server ignores them from non-hosts.
-  | { t: 'start' }
-  | { t: 'kick'; id: string }
-  | { t: 'config'; config: Partial<RoomConfig> }
-  | { t: 'lobby' }
-  | { t: 'ping' };
+// -------------------------------------------------------- realtime payloads
 
-export type ServerMsg =
-  | { t: 'welcome'; id: string; room: string; seed: number; state: RoomState }
-  | { t: 'state'; state: RoomState }
-  | { t: 'pos'; id: string; x: number; y: number; state: string }
-  | { t: 'countdown'; seconds: number }
-  | { t: 'kicked'; reason: string }
-  | { t: 'error'; message: string }
-  | { t: 'pong' };
+/**
+ * Per-player Presence metadata. Presence handles join/leave and carries each player's
+ * low-frequency score state; live ball positions travel over Broadcast instead.
+ */
+export interface PresenceMeta {
+  id: string;
+  name: string;
+  hue: number;
+  strokes: number;
+  total: number;
+  state: PlayerInfo['state'];
+  done: boolean;
+  /** Client wall-clock at join, used for deterministic host election. */
+  joinedAt: number;
+}
+
+/** The host-authored slice of room state, broadcast on every change. */
+export interface RoomMeta {
+  phase: RoomPhase;
+  hole: number;
+  config: RoomConfig;
+}
+
+/** Broadcast event names on the room channel. */
+export type BroadcastEvent = 'state' | 'pos' | 'kick' | 'countdown';
+
+export interface StatePayload extends RoomMeta {
+  /** Sender id; receivers accept state only from the currently-elected host. */
+  by: string;
+}
+export interface PosPayload {
+  id: string;
+  x: number;
+  y: number;
+  state: string;
+}
+export interface KickPayload {
+  id: string;
+}
+export interface CountdownPayload {
+  seconds: number;
+}

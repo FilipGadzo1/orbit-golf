@@ -3,6 +3,11 @@ dist/
 .DS_Store
 *.log
 
+# Local env (keep .env.example tracked)
+.env
+.env.local
+.env.*.local
+
 # oh-my-claudecode orchestration state
 .omc/
 

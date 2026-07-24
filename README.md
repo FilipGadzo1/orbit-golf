@@ -10,40 +10,44 @@ distant world — with friends watching your ball as a live ghost.
 
 ```bash
 npm install
-npm run dev          # client on :5173, multiplayer server on :8787
+npm run dev          # Vite dev server on :5173
 ```
 
-Open <http://localhost:5173>. The Vite dev server proxies `/ws` to the game server, so
-multiplayer works in dev with no extra setup.
+Open <http://localhost:5173>. There is **no game server** — the whole app is a static
+client. Single-player needs nothing else. Multiplayer uses Supabase Realtime, so to play
+with friends locally, copy `.env.example` to `.env.local` and fill in your Supabase
+project's URL and publishable key (see below).
 
-For friends on your network (or a deployed box), build once and serve everything from
-the Node server on a single port:
+Anyone can deep-link straight into a lobby with `?room=NEBULA`.
 
-```bash
-npm run build
-npm start            # http://localhost:8787 — set PORT to change it
-```
+## Deploying (Vercel + Supabase, no server)
 
-Share that address plus a room code. Anyone can also deep-link straight into a lobby
-with `?room=NEBULA`.
+Multiplayer runs entirely on **Supabase Realtime** (Presence + Broadcast) — no server
+process, no database tables, no auth. That makes the whole thing a static site you can
+host anywhere, including Vercel's free tier.
 
-## Deploying
+1. In your Supabase project, grab the **Project URL** and the **publishable (anon) key**
+   from *Project Settings → API*. Realtime is on by default and needs no tables or RLS for
+   public Broadcast/Presence.
+2. In Vercel → *Project → Settings → Environment Variables*, add:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY`
+3. Redeploy. That's it — Vercel builds the static client (`npm run build`), and the client
+   talks to Supabase directly from the browser.
 
-The server serves the built client **and** the WebSocket endpoint from one process, so
-the simplest deploy is a single Node web service. A `render.yaml` is included: on
-[Render](https://dashboard.render.com) choose **New → Blueprint**, point it at this repo,
-and it runs `npm install && npm run build` then `npm start`. One URL, multiplayer works,
-free tier. (Free instances sleep when idle, so the first visit after a lull takes ~30s.)
+Both env vars are public client-side values (the publishable key is designed to ship in
+the browser). Without them, single-player still works and multiplayer shows a
+"not configured" notice instead of failing silently.
 
-To instead keep the client on a static host (Netlify/Vercel) and run only the server
-elsewhere, set **`VITE_WS_URL`** at build time on the static host to the server's URL
-(e.g. `https://orbit-golf.onrender.com`). The client normalises `http(s)`/`ws(s)` and
-appends `/ws`. With `VITE_WS_URL` unset it connects to `/ws` on its own origin, which is
-what the single-service deploy relies on. For quick tests you can also set
-`localStorage['orbit-golf.serverUrl']` in the browser to override at runtime.
+### How it works without a server
 
-> A purely static deploy (no server anywhere) runs single-player fine but multiplayer
-> will report *"could not reach the game server"* — there's no `/ws` to connect to.
+- **Course seed** is derived from the room code (`hashString(code)`), so every client in a
+  room generates the identical solar system with zero coordination.
+- **Presence** carries the player roster and each player's score.
+- **Broadcast** carries live ball positions (ghosts) and the host-authored room state.
+- The **host** is elected deterministically as the earliest joiner — every client computes
+  the same host from Presence — and owns phase/hole/config plus hole advancement. Clients
+  accept room state only from the current host, so a modified client can't hijack a room.
 
 ## How to play
 
@@ -96,9 +100,9 @@ to escape. That's what makes planet size read as difficulty at a glance.
 
 ## Multiplayer
 
-Rooms are in-memory on the Node server. The first player into a room fixes the course
-seed; everyone who joins later inherits it. Positions broadcast at ~20 Hz and render as
-translucent ghosts with name tags.
+Rooms live entirely on Supabase Realtime — no game server (see *Deploying* above). The
+room code determines the course seed, so everyone in a room plays the same solar system.
+Positions broadcast at ~20 Hz and render as translucent ghosts with name tags.
 
 **Lobby and host.** Joining a room drops you into a **lobby**, not straight into a game.
 The first player in is the **host** (shown with a ★ crown) and controls:
@@ -109,10 +113,11 @@ The first player in is the **host** (shown with a ★ crown) and controls:
 - **Allow hole restarts** — when off, nobody can retry a hole.
 - **Kick** — remove any player; they're bounced back to the title with a notice.
 
-Host role auto-transfers to the oldest remaining player if the host leaves. All host
-actions are enforced on the server, so a modified client can't start, kick, or change
-settings unless the server agrees it's the host. Once playing, the room advances to the
-next hole when every player has holed out or pressed Ready.
+Host role auto-transfers to the earliest remaining player if the host leaves. Because the
+host is elected deterministically from Presence, every client agrees who it is, and
+clients only accept room state from the current host — so a modified client can't start,
+kick, or change settings for others. Once playing, the room advances to the next hole when
+every player has holed out or pressed Ready.
 
 Scoring is kept honest in a lobby: restarting a hole (`R`) carries your strokes over and
 adds a penalty stroke instead of wiping the slate, and once you've holed out the
@@ -144,14 +149,14 @@ back into the last room you shared, or **✕** to forget them.
 
 The tradeoff is that identity is just a name — there's no way to tell two players with
 the same name apart, and the list doesn't sync between your own devices. Upgrading to
-real accounts later would mean adding auth and a database to the server.
+real accounts later would mean adding Supabase Auth and a table.
 
 ## Tests
 
 ```bash
-npm test         # headless generator + physics + stats checks, no browser
+npm test         # headless generator + physics + stats + multiplayer checks, no browser
 npm run build
-npm run test:e2e # drives the real game in Chromium, two players, writes screenshots/
+npm run test:e2e # drives the real game in Chromium, writes screenshots/
 npm run audit    # samples 16k generated holes + 23k simulated shots, prints a report
 ```
 
@@ -159,16 +164,20 @@ npm run audit    # samples 16k generated holes + 23k simulated shots, prints a r
 reports cup-surface distribution per tier, hazard frequency, world sizes, and simulated
 shot distances — which is how the achievement list was confirmed to be fully reachable.
 
-`npm test` runs two headless suites. The course suite generates 150 courses and asserts
-they're well-formed (no overlapping planets, cup never on a hazard, tee in bounds), that
-the simulation is deterministic, that balls come to rest, and that holes are reachable.
-The stats suite covers scoring buckets, streaks, penalties, best-run selection,
+`npm test` runs three headless suites. The **course** suite generates 150 courses and
+asserts they're well-formed (no overlapping planets, cup never on a hazard, tee in
+bounds), deterministic, that balls come to rest, and that holes are reachable. The
+**stats** suite covers scoring buckets, streaks, penalties, best-run selection,
 achievement unlocking, persistence and legacy migration, and the recent-players roster.
+The **multiplayer** suite runs several real `RealtimeClient`s against an in-memory relay
+transport and checks host election, the lobby→playing gate, config authority, kick, hole
+advancement, and host reassignment — all the logic that used to be the server's job.
 
-`npm run test:e2e` boots the server, plays a hole, sinks it, checks penalties and the
-no-contact timer, opens the career sheet, reloads to confirm stats persist, then
-connects two browsers to one room and verifies seed sync, ghosts, the roster, the
-multiplayer restart penalty, and hole advancement — 44 checks, with screenshots.
+`npm run test:e2e` serves the production build, plays and sinks a hole, checks penalties
+and the no-contact timer, opens the career sheet, reloads to confirm stats persist, then
+forces the in-memory relay and drives a real client plus a simulated in-page peer to
+verify the lobby, host controls, config propagation, start, ghosts, kick, and advancement
+— 59 checks, with screenshots.
 
 ## Layout
 
@@ -177,10 +186,9 @@ src/
   core/      seeded RNG, vector maths
   game/      generator, physics, settings, stats, friends, the Game orchestrator
   render/    camera, starfield, gravity field, particles, draw routines
-  net/       WebSocket client + shared message types
+  net/       Supabase Realtime client, transport abstraction, shared types
   audio/     runtime-synthesised sound effects (no audio assets)
-server/      static file server + WebSocket room server
-test/        headless smoke test
+test/        headless suites (course, stats, multiplayer)
 scripts/     test runners
 ```
 

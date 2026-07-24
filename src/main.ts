@@ -23,8 +23,9 @@ import {
   underPar,
   type Achievement,
 } from './game/stats';
-import type { NetStatus } from './net/client';
+import { isMultiplayerConfigured } from './net/config';
 import type { AimPolicy, PlayerInfo, RoomPhase } from './net/protocol';
+import { RealtimeClient, type NetStatus } from './net/realtime';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -98,7 +99,27 @@ function openScreen(screen: Screen): void {
   show(els.stats, screen === 'stats');
   show(els.hud, inGame);
   if (screen === 'stats') renderStats();
+  if (screen === 'multi') updateMultiConfigNotice();
   canvas.style.cursor = screen === 'game' ? 'crosshair' : 'default';
+}
+
+/** Warns up front if Supabase env vars are missing, so joining doesn't just silently fail. */
+const memoryNet = Boolean((window as unknown as { __ORBIT_MEMORY_NET?: boolean }).__ORBIT_MEMORY_NET);
+
+function updateMultiConfigNotice(): void {
+  const joinBtn = $<HTMLButtonElement>('btn-join');
+  if (isMultiplayerConfigured() || game.net.connected || memoryNet) {
+    joinBtn.disabled = false;
+    if (!game.net.connected) {
+      els.netLine.textContent = 'Not connected.';
+      delete els.netLine.dataset.status;
+    }
+    return;
+  }
+  joinBtn.disabled = true;
+  els.netLine.dataset.status = 'error';
+  els.netLine.textContent =
+    'Multiplayer is offline: set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY, then redeploy.';
 }
 
 /** Where closing a sheet should return you to. */
@@ -310,8 +331,8 @@ $('btn-join').addEventListener('click', () => {
   }
   els.netLine.textContent = 'Connecting…';
   els.netLine.dataset.status = 'connecting';
-  // The first person into a room fixes the seed; later joiners inherit it.
-  game.net.connect(room, settings.playerName, settings.hue, game.seed);
+  // The course is derived from the room code, so no seed needs to be exchanged.
+  game.net.connect(room, settings.playerName, settings.hue);
 });
 
 $('btn-leave').addEventListener('click', () => {
@@ -869,4 +890,38 @@ window.addEventListener('pagehide', () => {
 if (new URLSearchParams(location.search).get('room')) {
   inGame = true;
   openScreen('multi');
+}
+
+// Test-only: when the in-memory relay is forced (browser smoke test), expose a way to
+// spawn simulated peers in this same page so the real UI can be driven against them.
+// Two Playwright tabs can't share the in-memory relay, so the "friend" lives in-page.
+if (memoryNet) {
+  const peers: Record<string, { c: RealtimeClient; state: () => unknown; kicked: () => boolean }> = {};
+  (window as unknown as { __orbitPeer: unknown }).__orbitPeer = {
+    spawn(name: string, room: string, hue = 120) {
+      let last: import('./net/protocol').RoomState | null = null;
+      let kicked = false;
+      const c = new RealtimeClient({
+        onWelcome: (m) => (last = m.state),
+        onState: (s) => (last = s),
+        onPos: () => {},
+        onCountdown: () => {},
+        onKicked: () => (kicked = true),
+        onStatus: () => {},
+      });
+      c.connect(room, name, hue);
+      peers[name] = { c, state: () => last, kicked: () => kicked };
+    },
+    isHost: (n: string) => peers[n]?.c.amHost ?? false,
+    selfId: (n: string) => peers[n]?.c.selfId ?? '',
+    phase: (n: string) => (peers[n]?.state() as { phase?: string } | null)?.phase,
+    aimPolicy: (n: string) => (peers[n]?.state() as { config?: { aimPolicy?: string } } | null)?.config?.aimPolicy,
+    players: (n: string) => (peers[n]?.state() as { players?: unknown[] } | null)?.players?.length ?? 0,
+    kicked: (n: string) => peers[n]?.kicked() ?? false,
+    start: (n: string) => peers[n]?.c.start(),
+    setConfig: (n: string, cfg: unknown) => peers[n]?.c.setConfig(cfg as never),
+    markDone: (n: string, s: number, r: 'sunk' | 'lost') => peers[n]?.c.markDone(s, r),
+    sendPos: (n: string, x: number, y: number, s: string) => peers[n]?.c.sendPos(x, y, s, performance.now() + Math.random() * 1e6),
+    disconnect: (n: string) => peers[n]?.c.disconnect(),
+  };
 }

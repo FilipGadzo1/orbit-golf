@@ -1,8 +1,10 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  /** Optional WebSocket/HTTP server URL for split static-client + server deployments. */
-  readonly VITE_WS_URL?: string;
+  /** Supabase project URL — powers multiplayer via Realtime. */
+  readonly VITE_SUPABASE_URL?: string;
+  /** Supabase publishable (anon) key. Safe to ship in the client. */
+  readonly VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY?: string;
 }
 
 interface ImportMeta {

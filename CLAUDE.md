@@ -5,13 +5,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm run dev        # Vite client on :5173 + room server on :8787 (proxied /ws)
+npm run dev        # Vite dev server on :5173 (static app; no game server exists)
 npm run build      # tsc --noEmit && vite build — always run before test:e2e
-npm test           # headless suites (no browser)
-npm run test:e2e   # Chromium, two players, writes screenshots/ — needs a fresh build
+npm test           # headless suites: course, stats, multiplayer (no browser)
+npm run test:e2e   # Chromium against the built app, writes screenshots/ — needs a fresh build
 npm run audit      # samples 16k generated holes + 23k simulated shots, prints a report
-npm start          # serves dist/ + WebSocket on one port (PORT env, default 8787)
 ```
+
+The app is a **static client**; there is no server. Multiplayer runs on Supabase Realtime,
+configured via `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY` (see
+`.env.example`). Deploy is any static host (the user is on Vercel).
 
 There is no test framework. `scripts/run-tests.js` bundles each `test/<name>.ts` with
 esbuild into `node_modules/.cache/` and runs it in Node. To run one suite, edit the
@@ -30,8 +33,9 @@ parameter fails the build, not just a lint step.
 
 This is the invariant everything else hangs off. `generateLevel(seed, holeIndex)` in
 `src/game/generator.ts` must be **pure and deterministic** — same inputs, byte-identical
-level. Multiplayer relies on it: the server never sends level geometry, only a seed and a
-hole number, and every client regenerates the same solar system locally.
+level. Multiplayer relies on it: no level geometry is ever transmitted. The seed comes
+from the room code and the hole number from the host, and every client regenerates the
+same solar system locally.
 
 Consequences:
 - Never use `Math.random()` inside generation. Use `Rng` (mulberry32) seeded from
@@ -42,34 +46,37 @@ Consequences:
   and restores them.
 - `test/smoke.ts` asserts determinism directly; the stats suite does not cover it.
 
-## Server authority boundary
+## Multiplayer: serverless, host-authoritative
 
-`server/index.js` is authoritative over room-level state: **seed**, **hole number**,
-**phase** (`lobby`/`playing`), **host**, and **room config** (aim policy, allow-restart).
-It is not authoritative over physics — ball positions broadcast at ~20 Hz are cosmetic
-ghosts only, each client simulates its own ball. Rooms are in-memory and vanish when
-empty; there is no database anywhere in this project.
+There is no server. Multiplayer runs on Supabase Realtime, and the logic that would
+normally live server-side lives in `net/realtime.ts` (`RealtimeClient`). The layering:
 
-Host-only actions (`start`, `kick`, `config`, `lobby`) are enforced server-side — the
-server checks `room.host === player.id` and silently drops the message otherwise, so
-hiding a button in the client is a UX nicety, not the security boundary. The oldest
-remaining player inherits the host role via `ensureHost` when the host disconnects.
+- `net/transport.ts` — a `Transport` interface with two implementations: `SupabaseTransport`
+  (production) and an in-memory relay (`memoryTransportFactory`) that lets several clients
+  run against each other in one process. `RealtimeClient` picks the memory factory when
+  `globalThis.__ORBIT_MEMORY_NET` is set (tests + the browser smoke test).
+- **Presence** carries the player roster + per-player score (low frequency). **Broadcast**
+  carries live positions (`pos`) and the host-authored room state (`state`).
+- **Seed is derived from the room code** (`hashString(code)`) — no coordination, no
+  "first joiner assigns it". Different code ⇒ different course.
+- **Host election is deterministic**: earliest `joinedAt` in Presence, tie-broken by id.
+  Every client computes the same host (`electHost`). The host owns `RoomMeta`
+  (phase/hole/config), broadcasts it, and runs hole advancement. Non-hosts accept a `state`
+  broadcast **only if `payload.by === electHost()`** — that's the anti-spoofing boundary,
+  in place of a server check. Since there's no trusted server, this is best-effort integrity
+  for a friends game, not hard security.
 
-The client mirror is `Game.applyRoomState`, the **single** entry point for every `state`
-message. It diffs phase and hole against the previous values to decide when to switch
-screens (`onPhaseChange`) and reload the course. A `welcome` is baselined from `lobby` so
-joining a game already in progress still registers as a transition. If you add room state,
-extend `RoomState` in `protocol.ts` and thread it through `applyRoomState` — don't add
-side-channel messages.
+Client-side room state still flows through the **single** `Game.applyRoomState` entry
+point, which diffs phase/hole to drive `onPhaseChange` (screen switch) and course reload.
+`RealtimeClient` produces those `RoomState` snapshots from Presence + `RoomMeta`. If you
+add room state, extend `RoomState`/`RoomMeta` in `protocol.ts` and thread it through both
+`RealtimeClient` and `applyRoomState` — don't add side-channel broadcast events.
 
-The room advances when every player is `done` (holed out, or pressed Ready), after a 4s
-countdown. Scores are kept honest client-side: restarting a hole in multiplayer carries
-strokes over and adds a penalty, and the result card's replay button is hidden once a
-hole is scored.
-
-The WebSocket URL is resolved in `net/client.ts`: build-time `VITE_WS_URL` (static-client
-+ separate-server deploys) → `localStorage['orbit-golf.serverUrl']` runtime override →
-same-origin `/ws` (the single-service default that `render.yaml` and `npm start` rely on).
+Per-hole score reset happens in `applyRoomMeta`: entering a new phase zeroes the card,
+a hole change banks strokes into total and resets. The advance countdown delay is
+`advanceDelayMs` (default 4000), overridable via `setAdvanceDelay` so tests don't wait.
+Scores stay honest as before: multiplayer restart carries strokes + a penalty, and the
+replay button is hidden once a hole is scored.
 
 ## Physics scale
 
@@ -122,6 +129,13 @@ Persistence is three independent localStorage modules, each with its own key and
 `__surfacePoint`. These exist solely for `scripts/browser-smoke.js` and are marked as
 such. `game.airborneTimeout` is a field rather than a constant so the e2e test can shorten
 it instead of waiting 60 seconds.
+
+For multiplayer, two Playwright tabs can't share the in-memory relay (separate JS
+contexts), so the browser test sets `window.__ORBIT_MEMORY_NET = true` via `addInitScript`
+(forcing the memory transport) and drives a real client plus a **simulated in-page peer**
+exposed as `window.__orbitPeer` (guarded behind the same flag in `main.ts`). The deeper
+multi-client logic — election, advancement, reassignment — is covered in `test/multiplayer.ts`
+headlessly, where several `RealtimeClient`s share the process-local relay.
 
 ## When changing generation or difficulty
 

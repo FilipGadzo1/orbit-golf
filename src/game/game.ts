@@ -1,7 +1,7 @@
 import { sfx } from '../audio/sfx';
 import { clamp, damp, type Vec } from '../core/vec';
-import { NetClient, type NetStatus } from '../net/client';
 import { DEFAULT_ROOM_CONFIG, type PlayerInfo, type RoomConfig, type RoomPhase, type RoomState } from '../net/protocol';
+import { RealtimeClient, type NetStatus } from '../net/realtime';
 import { Camera, MAX_ZOOM } from '../render/camera';
 import { GravityField } from '../render/gravityfield';
 import { Particles } from '../render/particles';
@@ -122,7 +122,7 @@ export class Game {
   private pinchDist = 0;
 
   // Multiplayer
-  net: NetClient;
+  net: RealtimeClient;
   ghosts = new Map<string, Ghost>();
   players: PlayerInfo[] = [];
   phase: RoomPhase = 'lobby';
@@ -160,7 +160,7 @@ export class Game {
     this.settings = settings;
     this.starfield = new Starfield(this.seed);
 
-    this.net = new NetClient({
+    this.net = new RealtimeClient({
       onWelcome: (m) => {
         this.seed = m.seed;
         this.starfield = new Starfield(this.seed);
@@ -296,7 +296,7 @@ export class Game {
 
   nextHole(): void {
     if (this.net.connected) {
-      this.net.send({ t: 'ready' });
+      this.net.markReady();
       this.waitingForOthers = true;
       return;
     }
@@ -366,7 +366,7 @@ export class Game {
     this.announce();
 
     if (this.net.connected) {
-      this.net.send({ t: 'done', strokes: this.strokes, result: outcome === 'sunk' ? 'sunk' : 'lost' });
+      this.net.markDone(this.strokes, outcome === 'sunk' ? 'sunk' : 'lost');
       this.waitingForOthers = true;
     }
 
@@ -416,7 +416,7 @@ export class Game {
       spread: 1.4,
       size: 2,
     });
-    if (this.net.connected) this.net.send({ t: 'stroke', strokes: this.strokes });
+    if (this.net.connected) this.net.markStrokes(this.strokes);
   }
 
   /** Banks the distance and bounces of the shot that just ended. */
@@ -448,7 +448,7 @@ export class Game {
     this.ball.restAngle = this.lastRestAngle;
     this.ball.trail.length = 0;
     this.sim = makeSim();
-    if (this.net.connected) this.net.send({ t: 'stroke', strokes: this.strokes });
+    if (this.net.connected) this.net.markStrokes(this.strokes);
   }
 
   private handleEvents(events: ImpactEvent[]): void {
@@ -910,19 +910,19 @@ export class Game {
   // ---- host actions (no-ops unless the server agrees you're the host) ----------
 
   startMultiplayerGame(): void {
-    if (this.isHost) this.net.send({ t: 'start' });
+    this.net.start();
   }
 
   returnRoomToLobby(): void {
-    if (this.isHost) this.net.send({ t: 'lobby' });
+    this.net.toLobby();
   }
 
   kickPlayer(id: string): void {
-    if (this.isHost && id !== this.net.selfId) this.net.send({ t: 'kick', id });
+    this.net.kick(id);
   }
 
   setRoomConfig(partial: Partial<RoomConfig>): void {
-    if (this.isHost) this.net.send({ t: 'config', config: partial });
+    this.net.setConfig(partial);
   }
 
   /** Effective aim-guide seconds after applying any room policy. */

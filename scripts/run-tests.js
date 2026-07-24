@@ -12,7 +12,7 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const cache = path.join(root, 'node_modules', '.cache');
 fs.mkdirSync(cache, { recursive: true });
 
-const suites = ['smoke', 'stats'];
+const suites = ['smoke', 'stats', 'multiplayer'];
 let failed = 0;
 
 for (const suite of suites) {
