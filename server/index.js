@@ -22,6 +22,12 @@ const MIME = {
 /** Serves the production build when it exists; in dev Vite handles the client. */
 const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  // Lightweight health check for platform probes (Render etc.).
+  if (url.pathname === '/healthz') {
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    res.end('ok');
+    return;
+  }
   let filePath = path.join(DIST, decodeURIComponent(url.pathname));
   if (!filePath.startsWith(DIST)) {
     res.writeHead(403).end('Forbidden');
@@ -41,7 +47,9 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server, path: '/ws' });
 
-/** room code -> { seed, hole, players: Map<id, player> } */
+const DEFAULT_CONFIG = { aimPolicy: 'free', allowRestart: true };
+
+/** room code -> room record */
 const rooms = new Map();
 let nextId = 1;
 
@@ -57,12 +65,38 @@ function publicPlayers(room) {
   }));
 }
 
+/** The single source of truth clients render from. */
+function roomState(room) {
+  return {
+    phase: room.phase,
+    hole: room.hole,
+    host: room.host ?? '',
+    config: room.config,
+    players: publicPlayers(room),
+  };
+}
+
+function send(ws, msg) {
+  if (ws.readyState === 1) ws.send(JSON.stringify(msg));
+}
+
 function broadcast(room, msg, exceptId) {
   const data = JSON.stringify(msg);
   for (const p of room.players.values()) {
     if (p.id === exceptId) continue;
     if (p.ws.readyState === 1) p.ws.send(data);
   }
+}
+
+function broadcastState(room) {
+  broadcast(room, { t: 'state', state: roomState(room) });
+}
+
+/** Oldest remaining player inherits the host role. */
+function ensureHost(room) {
+  if (room.host && room.players.has(room.host)) return;
+  const first = room.players.values().next().value;
+  room.host = first ? first.id : null;
 }
 
 function advanceHole(room) {
@@ -74,15 +108,32 @@ function advanceHole(room) {
     p.done = false;
   }
   room.advanceTimer = null;
-  broadcast(room, { t: 'hole', hole: room.hole, players: publicPlayers(room) });
+  broadcastState(room);
 }
 
 function maybeAdvance(room) {
+  if (room.phase !== 'playing' || room.advanceTimer) return;
   const players = [...room.players.values()];
-  if (players.length === 0 || room.advanceTimer) return;
-  if (!players.every((p) => p.done)) return;
+  if (players.length === 0 || !players.every((p) => p.done)) return;
   broadcast(room, { t: 'countdown', seconds: 4 });
   room.advanceTimer = setTimeout(() => advanceHole(room), 4000);
+}
+
+function cancelAdvance(room) {
+  if (room.advanceTimer) {
+    clearTimeout(room.advanceTimer);
+    room.advanceTimer = null;
+  }
+}
+
+/** Resets every player's score. Used when a fresh game starts. */
+function resetScores(room) {
+  for (const p of room.players.values()) {
+    p.strokes = 0;
+    p.total = 0;
+    p.state = 'idle';
+    p.done = false;
+  }
 }
 
 wss.on('connection', (ws) => {
@@ -105,6 +156,9 @@ wss.on('connection', (ws) => {
           // The first player to create a room fixes the course seed for everyone.
           seed: Number.isFinite(msg.seed) ? msg.seed >>> 0 : (Math.random() * 0xffffffff) >>> 0,
           hole: 1,
+          phase: 'lobby',
+          host: null,
+          config: { ...DEFAULT_CONFIG },
           players: new Map(),
           advanceTimer: null,
         });
@@ -123,21 +177,14 @@ wss.on('connection', (ws) => {
         ws,
       };
       room.players.set(player.id, player);
-      ws.send(
-        JSON.stringify({
-          t: 'welcome',
-          id: player.id,
-          room: room.code,
-          seed: room.seed,
-          hole: room.hole,
-          players: publicPlayers(room),
-        }),
-      );
-      broadcast(room, { t: 'players', players: publicPlayers(room) }, null);
+      ensureHost(room);
+      send(ws, { t: 'welcome', id: player.id, room: room.code, seed: room.seed, state: roomState(room) });
+      broadcastState(room);
       return;
     }
 
     if (!player || !room) return;
+    const isHost = room.host === player.id;
 
     switch (msg.t) {
       case 'pos':
@@ -146,25 +193,69 @@ wss.on('connection', (ws) => {
         player.state = msg.state;
         broadcast(room, { t: 'pos', id: player.id, x: msg.x, y: msg.y, state: msg.state }, player.id);
         break;
+
       case 'stroke':
         player.strokes = Math.max(0, Math.min(999, msg.strokes | 0));
-        broadcast(room, { t: 'players', players: publicPlayers(room) });
+        broadcastState(room);
         break;
+
       case 'done':
+        if (room.phase !== 'playing') break;
         player.strokes = Math.max(0, Math.min(999, msg.strokes | 0));
-        player.state = msg.result;
+        player.state = msg.result === 'sunk' ? 'sunk' : 'lost';
         player.done = true;
-        broadcast(room, { t: 'players', players: publicPlayers(room) });
+        broadcastState(room);
         maybeAdvance(room);
         break;
+
       case 'ready':
-        // Lets a stuck lobby skip ahead without waiting on everyone.
+        if (room.phase !== 'playing') break;
         player.done = true;
-        broadcast(room, { t: 'players', players: publicPlayers(room) });
+        broadcastState(room);
         maybeAdvance(room);
         break;
+
+      // ---- host-only actions -------------------------------------------------
+      case 'start':
+        if (!isHost) break;
+        cancelAdvance(room);
+        room.phase = 'playing';
+        room.hole = 1;
+        resetScores(room);
+        broadcastState(room);
+        break;
+
+      case 'lobby':
+        if (!isHost) break;
+        cancelAdvance(room);
+        room.phase = 'lobby';
+        resetScores(room);
+        broadcastState(room);
+        break;
+
+      case 'config': {
+        if (!isHost || !msg.config) break;
+        const c = msg.config;
+        if (c.aimPolicy === 'free' || c.aimPolicy === 'on' || c.aimPolicy === 'off') {
+          room.config.aimPolicy = c.aimPolicy;
+        }
+        if (typeof c.allowRestart === 'boolean') room.config.allowRestart = c.allowRestart;
+        broadcastState(room);
+        break;
+      }
+
+      case 'kick': {
+        if (!isHost || msg.id === player.id) break;
+        const target = room.players.get(msg.id);
+        if (!target) break;
+        send(target.ws, { t: 'kicked', reason: 'The host removed you from the room.' });
+        // Close after the message flushes; the close handler cleans up and rebroadcasts.
+        setTimeout(() => target.ws.close(), 50);
+        break;
+      }
+
       case 'ping':
-        ws.send(JSON.stringify({ t: 'pong' }));
+        send(ws, { t: 'pong' });
         break;
     }
   });
@@ -173,12 +264,13 @@ wss.on('connection', (ws) => {
     if (!room || !player) return;
     room.players.delete(player.id);
     if (room.players.size === 0) {
-      if (room.advanceTimer) clearTimeout(room.advanceTimer);
+      cancelAdvance(room);
       rooms.delete(room.code);
-    } else {
-      broadcast(room, { t: 'players', players: publicPlayers(room) });
-      maybeAdvance(room);
+      return;
     }
+    ensureHost(room);
+    broadcastState(room);
+    maybeAdvance(room);
   });
 });
 

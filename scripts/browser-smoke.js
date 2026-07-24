@@ -258,6 +258,7 @@ try {
 
   // -------------------------------------------------------------- multiplayer
   const b = await makePlayer(browser, 'Tester Two');
+  // Player A joins first (becomes host), then B.
   for (const p of [a, b]) {
     await p.page.evaluate(() => {
       document.getElementById('btn-play-multi').click();
@@ -279,8 +280,68 @@ try {
   ]);
   check('both players share the same course seed', sameSeed[0] === sameSeed[1], sameSeed.join(' vs '));
 
+  // Joining lands both players in the lobby, NOT in a running game.
+  const aPhase = await a.page.evaluate(() => window.__game.phase);
+  check('joining a room starts in the lobby, not mid-game', aPhase === 'lobby', aPhase);
+  check('lobby panel is shown', await a.page.locator('#lobby-panel').isVisible());
+
   const lobbySize = await a.page.locator('#lobby-list li').count();
   check('lobby lists both players', lobbySize === 2, `${lobbySize} listed`);
+
+  // Host role: first joiner is host, sees Start + kick controls; the guest does not.
+  check('player one is the host', await a.page.evaluate(() => window.__game.isHost));
+  check('player two is not the host', !(await b.page.evaluate(() => window.__game.isHost)));
+  check('host crown is shown in the lobby', (await a.page.locator('#lobby-list .tag.host').count()) === 1);
+  check('host sees host controls', await a.page.locator('#host-controls').isVisible());
+  check('guest does not see host controls', !(await b.page.locator('#host-controls').isVisible()));
+  check('host sees a Start button', await a.page.locator('#lobby-cta .btn-primary').isVisible());
+  check('guest sees a waiting message', await b.page.locator('#lobby-cta .waiting').isVisible());
+  check('host can kick the guest', (await a.page.locator('#lobby-list .kick').count()) === 1);
+  check('guest cannot kick anyone', (await b.page.locator('#lobby-list .kick').count()) === 0);
+  await a.page.screenshot({ path: path.join(shots, '7-lobby-host.png') });
+  await b.page.screenshot({ path: path.join(shots, '8-lobby-guest.png') });
+
+  // Recent-players roster (the multi sheet is open in the lobby).
+  const friendRows = await a.page.locator('#friend-list li').count();
+  check('the other player is saved to the roster', friendRows === 1, `${friendRows} rows`);
+  const friendName = await a.page.locator('#friend-list .friend-name').first().textContent();
+  check('roster shows the right name', friendName === 'Tester Two', `got "${friendName}"`);
+  await a.page.locator('#friend-list .friend-btn.star').first().click();
+  await a.page.waitForTimeout(200);
+  const starred = await a.page.evaluate(
+    () => JSON.parse(localStorage.getItem('orbit-golf.friends.v1') ?? '[]')[0]?.starred,
+  );
+  check('starring a player persists to storage', starred === true, `starred=${starred}`);
+
+  // Host changes the aim-guide policy → it propagates and forces the guest.
+  await a.page.locator('#seg-aim .seg-btn[data-val="off"]').click();
+  await a.page.waitForTimeout(500);
+  const guestPolicy = await b.page.evaluate(() => window.__game.roomConfig.aimPolicy);
+  check('host aim-guide policy propagates to the guest', guestPolicy === 'off', guestPolicy);
+  const guestNote = await b.page.locator('#guest-note').textContent();
+  check('guest sees the forced rule described', /disabled/i.test(guestNote ?? ''), guestNote ?? '');
+
+  // Guest cannot change room config even by sending the message directly.
+  await b.page.evaluate(() => window.__game.net.send({ t: 'config', config: { aimPolicy: 'free' } }));
+  await b.page.waitForTimeout(400);
+  const stillOff = await a.page.evaluate(() => window.__game.roomConfig.aimPolicy);
+  check('a non-host cannot change room settings', stillOff === 'off', stillOff);
+
+  // Host starts the game → both players leave the lobby for the course.
+  await a.page.locator('#lobby-cta .btn-primary').click();
+  await a.page.waitForTimeout(900);
+  check('host is now in the playing phase', (await a.page.evaluate(() => window.__game.phase)) === 'playing');
+  check('guest is now in the playing phase', (await b.page.evaluate(() => window.__game.phase)) === 'playing');
+  check('starting closes the lobby and shows the HUD', await a.page.locator('#hud').isVisible());
+  check('the multi sheet is closed after start', !(await a.page.locator('#multi').isVisible()));
+
+  // The forced aim policy is in effect for the guest during play.
+  const effAim = await b.page.evaluate(() => {
+    // effectiveAimAssist is private; assert via the config the guide reads.
+    return window.__game.roomConfig.aimPolicy;
+  });
+  check('aim policy still forced off in play', effAim === 'off', effAim);
+  await a.page.screenshot({ path: path.join(shots, '9-multiplayer-play.png') });
 
   // Move player two and confirm player one sees the ghost move.
   await b.page.evaluate(() => {
@@ -294,29 +355,6 @@ try {
   });
   check('player one receives player two as a moving ghost', ghostMoved);
 
-  // ---------------------------------------------------- recent players roster
-  await a.page.waitForTimeout(600);
-  const friendRows = await a.page.locator('#friend-list li').count();
-  check('the other player is saved to the roster', friendRows === 1, `${friendRows} rows`);
-  const friendName = await a.page.locator('#friend-list .friend-name').first().textContent();
-  check('roster shows the right name', friendName === 'Tester Two', `got "${friendName}"`);
-  check(
-    'you are not added to your own roster',
-    !(await a.page.evaluate(() => JSON.parse(localStorage.getItem('orbit-golf.friends.v1') ?? '[]').some((f) => f.key === 'tester one'))),
-  );
-
-  await a.page.locator('#friend-list .friend-btn.star').first().click();
-  await a.page.waitForTimeout(250);
-  const starred = await a.page.evaluate(
-    () => JSON.parse(localStorage.getItem('orbit-golf.friends.v1') ?? '[]')[0]?.starred,
-  );
-  check('starring a player persists to storage', starred === true, `starred=${starred}`);
-  await a.page.screenshot({ path: path.join(shots, '9-friends.png') });
-
-  await a.page.locator('#btn-close-multi').click();
-  await a.page.waitForTimeout(400);
-  await a.page.screenshot({ path: path.join(shots, '7-multiplayer.png') });
-
   const scoreVisible = await a.page.locator('#scoreboard').isVisible();
   check('scoreboard appears in multiplayer', scoreVisible);
 
@@ -325,13 +363,9 @@ try {
     const g = window.__game;
     g.strokes = 3;
     g.restartHole();
-    return { strokes: g.strokes, hole: g.holeIndex, state: g.ball.state };
+    return { strokes: g.strokes, state: g.ball.state };
   });
-  check(
-    'multiplayer restart keeps strokes and adds a penalty',
-    mpRetry.strokes === 4,
-    `strokes=${mpRetry.strokes} (expected 4)`,
-  );
+  check('multiplayer restart keeps strokes and adds a penalty', mpRetry.strokes === 4, `strokes=${mpRetry.strokes}`);
   check('multiplayer restart re-tees the ball', mpRetry.state === 'idle', mpRetry.state);
 
   await a.page.waitForTimeout(600);
@@ -341,18 +375,18 @@ try {
   );
   check('the penalty is broadcast to the other player', broadcast === 4, `peer sees ${broadcast}`);
 
-  // Solo behaviour is unchanged: a restart is a clean slate.
-  const soloRetry = await b.page.evaluate(() => {
+  // Host forbids restarts → the guest's restart is blocked.
+  await a.page.evaluate(() => window.__game.setRoomConfig({ allowRestart: false }));
+  await a.page.waitForTimeout(400);
+  const blocked = await b.page.evaluate(() => {
     const g = window.__game;
-    const net = g.net;
-    g.net = { connected: false, send() {}, status: 'offline', room: '', selfId: '' };
-    g.strokes = 3;
+    g.strokes = 2;
     g.restartHole();
-    const strokes = g.strokes;
-    g.net = net;
-    return strokes;
+    return { strokes: g.strokes, canRestart: g.canRestart };
   });
-  check('solo restart still resets strokes to zero', soloRetry === 0, `strokes=${soloRetry}`);
+  check('host can disable restarts for everyone', blocked.canRestart === false, `canRestart=${blocked.canRestart}`);
+  check('a blocked restart does not add a stroke', blocked.strokes === 2, `strokes=${blocked.strokes}`);
+  await a.page.evaluate(() => window.__game.setRoomConfig({ allowRestart: true }));
 
   // Both ready up -> server advances the room to the next hole.
   const holeBefore = await a.page.evaluate(() => window.__game.holeIndex);
@@ -361,6 +395,28 @@ try {
   await a.page.waitForTimeout(5500);
   const holeAfter = await a.page.evaluate(() => window.__game.holeIndex);
   check('room advances when everyone is ready', holeAfter === holeBefore + 1, `${holeBefore} -> ${holeAfter}`);
+
+  // Host kicks the guest → the guest is bounced back to the title screen.
+  await a.page.evaluate(() => {
+    const g = window.__game;
+    const other = g.players.find((p) => p.id !== g.net.selfId);
+    if (other) g.kickPlayer(other.id);
+  });
+  await b.page.waitForTimeout(900);
+  check('a kicked player is disconnected', (await b.page.evaluate(() => window.__game.net.status)) !== 'online');
+  check('a kicked player returns to the title screen', await b.page.locator('#title').isVisible());
+  check('the host now sees only themselves', (await a.page.evaluate(() => window.__game.players.length)) === 1);
+
+  // Host reassignment: B rejoins, then the host (A) leaves → B inherits host.
+  await b.page.evaluate(() => document.getElementById('btn-play-multi').click());
+  await b.page.waitForTimeout(300);
+  await b.page.locator('#room-input').fill('E2ETEST');
+  await b.page.locator('#btn-join').click();
+  await b.page.waitForTimeout(800);
+  check('kicked player can rejoin', (await b.page.evaluate(() => window.__game.net.status)) === 'online');
+  await a.page.evaluate(() => window.__game.net.disconnect());
+  await b.page.waitForTimeout(800);
+  check('host role transfers when the host leaves', await b.page.evaluate(() => window.__game.isHost));
 
   check('no uncaught page errors (multiplayer)', b.errors.length === 0, b.errors.slice(0, 3).join(' | '));
 

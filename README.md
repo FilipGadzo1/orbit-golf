@@ -27,6 +27,24 @@ npm start            # http://localhost:8787 — set PORT to change it
 Share that address plus a room code. Anyone can also deep-link straight into a lobby
 with `?room=NEBULA`.
 
+## Deploying
+
+The server serves the built client **and** the WebSocket endpoint from one process, so
+the simplest deploy is a single Node web service. A `render.yaml` is included: on
+[Render](https://dashboard.render.com) choose **New → Blueprint**, point it at this repo,
+and it runs `npm install && npm run build` then `npm start`. One URL, multiplayer works,
+free tier. (Free instances sleep when idle, so the first visit after a lull takes ~30s.)
+
+To instead keep the client on a static host (Netlify/Vercel) and run only the server
+elsewhere, set **`VITE_WS_URL`** at build time on the static host to the server's URL
+(e.g. `https://orbit-golf.onrender.com`). The client normalises `http(s)`/`ws(s)` and
+appends `/ws`. With `VITE_WS_URL` unset it connects to `/ws` on its own origin, which is
+what the single-service deploy relies on. For quick tests you can also set
+`localStorage['orbit-golf.serverUrl']` in the browser to override at runtime.
+
+> A purely static deploy (no server anywhere) runs single-player fine but multiplayer
+> will report *"could not reach the game server"* — there's no `/ws` to connect to.
+
 ## How to play
 
 | Action | Control |
@@ -80,8 +98,21 @@ to escape. That's what makes planet size read as difficulty at a glance.
 
 Rooms are in-memory on the Node server. The first player into a room fixes the course
 seed; everyone who joins later inherits it. Positions broadcast at ~20 Hz and render as
-translucent ghosts with name tags. The room advances to the next hole once every player
-has finished or pressed Ready.
+translucent ghosts with name tags.
+
+**Lobby and host.** Joining a room drops you into a **lobby**, not straight into a game.
+The first player in is the **host** (shown with a ★ crown) and controls:
+
+- **Start game** — moves the whole room from lobby to hole 1.
+- **Aim guide policy** — *free choice* (each player's own setting), *everyone on*, or
+  *everyone off* (competitive, no aim preview for anyone).
+- **Allow hole restarts** — when off, nobody can retry a hole.
+- **Kick** — remove any player; they're bounced back to the title with a notice.
+
+Host role auto-transfers to the oldest remaining player if the host leaves. All host
+actions are enforced on the server, so a modified client can't start, kick, or change
+settings unless the server agrees it's the host. Once playing, the room advances to the
+next hole when every player has holed out or pressed Ready.
 
 Scoring is kept honest in a lobby: restarting a hole (`R`) carries your strokes over and
 adds a penalty stroke instead of wiping the slate, and once you've holed out the

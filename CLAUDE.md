@@ -44,15 +44,32 @@ Consequences:
 
 ## Server authority boundary
 
-`server/index.js` is authoritative over exactly two things: the room's **seed** and its
-**hole number**. It is not authoritative over physics. Ball positions broadcast at ~20 Hz
-are cosmetic ghosts only — each client simulates its own ball. Rooms are in-memory and
-vanish when empty; there is no database anywhere in this project.
+`server/index.js` is authoritative over room-level state: **seed**, **hole number**,
+**phase** (`lobby`/`playing`), **host**, and **room config** (aim policy, allow-restart).
+It is not authoritative over physics — ball positions broadcast at ~20 Hz are cosmetic
+ghosts only, each client simulates its own ball. Rooms are in-memory and vanish when
+empty; there is no database anywhere in this project.
+
+Host-only actions (`start`, `kick`, `config`, `lobby`) are enforced server-side — the
+server checks `room.host === player.id` and silently drops the message otherwise, so
+hiding a button in the client is a UX nicety, not the security boundary. The oldest
+remaining player inherits the host role via `ensureHost` when the host disconnects.
+
+The client mirror is `Game.applyRoomState`, the **single** entry point for every `state`
+message. It diffs phase and hole against the previous values to decide when to switch
+screens (`onPhaseChange`) and reload the course. A `welcome` is baselined from `lobby` so
+joining a game already in progress still registers as a transition. If you add room state,
+extend `RoomState` in `protocol.ts` and thread it through `applyRoomState` — don't add
+side-channel messages.
 
 The room advances when every player is `done` (holed out, or pressed Ready), after a 4s
 countdown. Scores are kept honest client-side: restarting a hole in multiplayer carries
 strokes over and adds a penalty, and the result card's replay button is hidden once a
 hole is scored.
+
+The WebSocket URL is resolved in `net/client.ts`: build-time `VITE_WS_URL` (static-client
++ separate-server deploys) → `localStorage['orbit-golf.serverUrl']` runtime override →
+same-origin `/ws` (the single-service default that `render.yaml` and `npm start` rely on).
 
 ## Physics scale
 

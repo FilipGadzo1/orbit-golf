@@ -24,7 +24,7 @@ import {
   type Achievement,
 } from './game/stats';
 import type { NetStatus } from './net/client';
-import type { PlayerInfo } from './net/protocol';
+import type { AimPolicy, PlayerInfo, RoomPhase } from './net/protocol';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -53,7 +53,14 @@ const els = {
   roomLabel: $('room-label'),
   netDot: $('net-dot'),
   netLine: $('net-line'),
+  lobbyPanel: $('lobby-panel'),
+  lobbyPhase: $('lobby-phase'),
   lobbyList: $<HTMLUListElement>('lobby-list'),
+  hostControls: $('host-controls'),
+  segAim: $('seg-aim'),
+  cfgRestart: $<HTMLInputElement>('cfg-restart'),
+  guestNote: $('guest-note'),
+  lobbyCta: $('lobby-cta'),
   seedInput: $<HTMLInputElement>('seed-input'),
   roomInput: $<HTMLInputElement>('room-input'),
   progressLine: $('progress-line'),
@@ -313,6 +320,7 @@ $('btn-leave').addEventListener('click', () => {
   els.netLine.textContent = 'Not connected.';
   delete els.netLine.dataset.status;
   els.lobbyList.innerHTML = '';
+  show(els.lobbyPanel, false);
   renderScoreboard([]);
 });
 
@@ -329,11 +337,157 @@ game.onNetStatus = (status: NetStatus, detail?: string) => {
   } else if (status === 'error') {
     els.netLine.textContent = detail ?? 'Connection failed.';
     els.netLine.dataset.status = 'error';
+    show(els.lobbyPanel, false);
     toast('Could not reach the game server');
   } else if (status === 'offline') {
     els.netLine.textContent = 'Not connected.';
     delete els.netLine.dataset.status;
+    show(els.lobbyPanel, false);
   }
+};
+
+// ---- host controls: aim policy & restart toggle -----------------------------
+
+els.segAim.querySelectorAll<HTMLButtonElement>('.seg-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    if (!game.isHost) return;
+    sfx.ui();
+    game.setRoomConfig({ aimPolicy: btn.dataset.val as AimPolicy });
+  });
+});
+
+els.cfgRestart.addEventListener('change', () => {
+  if (!game.isHost) return;
+  sfx.ui();
+  game.setRoomConfig({ allowRestart: els.cfgRestart.checked });
+});
+
+// ---- the shared lobby renderer, driven by every room-state update -----------
+
+function renderLobby(): void {
+  const connected = game.net.connected;
+  show(els.lobbyPanel, connected);
+  if (!connected) return;
+
+  const host = game.isHost;
+  els.lobbyPhase.textContent = game.phase === 'lobby' ? '· waiting to start' : '· in progress';
+
+  // Player list with host crown, ready/kick affordances.
+  els.lobbyList.innerHTML = '';
+  for (const p of game.players) {
+    const li = document.createElement('li');
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.style.background = `hsl(${p.hue}, 95%, 68%)`;
+
+    const name = document.createElement('span');
+    name.className = `lobby-name${p.id === game.net.selfId ? ' you' : ''}`;
+    name.textContent = `${p.name}${p.id === game.net.selfId ? ' (you)' : ''}`;
+
+    li.append(chip, name);
+
+    if (p.id === game.hostId) {
+      const tag = document.createElement('span');
+      tag.className = 'tag host';
+      tag.textContent = '★ Host';
+      li.append(tag);
+    } else if (game.phase === 'playing' && p.done) {
+      const tag = document.createElement('span');
+      tag.className = 'tag done';
+      tag.textContent = '✓ Done';
+      li.append(tag);
+    }
+
+    // Host can remove anyone but themselves.
+    if (host && p.id !== game.net.selfId) {
+      const kick = document.createElement('button');
+      kick.className = 'kick';
+      kick.title = `Kick ${p.name}`;
+      kick.textContent = '⨯';
+      kick.addEventListener('click', () => {
+        if (confirm(`Remove ${p.name} from the room?`)) game.kickPlayer(p.id);
+      });
+      li.append(kick);
+    }
+    els.lobbyList.append(li);
+  }
+
+  // Host controls vs. read-only guest note.
+  show(els.hostControls, host);
+  show(els.guestNote, !host);
+
+  els.segAim.querySelectorAll<HTMLButtonElement>('.seg-btn').forEach((b) => {
+    b.classList.toggle('active', b.dataset.val === game.roomConfig.aimPolicy);
+    b.disabled = !host;
+  });
+  els.cfgRestart.checked = game.roomConfig.allowRestart;
+  els.cfgRestart.disabled = !host;
+
+  if (!host) {
+    const aim =
+      game.roomConfig.aimPolicy === 'off'
+        ? 'disabled for everyone'
+        : game.roomConfig.aimPolicy === 'on'
+          ? 'on for everyone'
+          : 'each player’s choice';
+    els.guestNote.textContent = `Host rules — aim guide: ${aim}; hole restarts: ${game.roomConfig.allowRestart ? 'allowed' : 'off'}.`;
+  }
+
+  // Call to action.
+  els.lobbyCta.innerHTML = '';
+  if (game.phase === 'lobby') {
+    if (host) {
+      const start = document.createElement('button');
+      start.className = 'btn btn-primary';
+      start.textContent = `Start game · ${game.players.length} player${game.players.length === 1 ? '' : 's'}`;
+      start.addEventListener('click', () => {
+        sfx.ui();
+        game.startMultiplayerGame();
+      });
+      els.lobbyCta.append(start);
+    } else {
+      const wait = document.createElement('div');
+      wait.className = 'waiting';
+      wait.textContent = 'Waiting for the host to start the game…';
+      els.lobbyCta.append(wait);
+    }
+  } else if (host) {
+    const toLobby = document.createElement('button');
+    toLobby.className = 'btn btn-ghost';
+    toLobby.textContent = 'Return everyone to lobby';
+    toLobby.addEventListener('click', () => {
+      sfx.ui(false);
+      game.returnRoomToLobby();
+    });
+    els.lobbyCta.append(toLobby);
+  }
+}
+
+// Switch screens when the room starts or returns to the lobby.
+game.onPhaseChange = (phase: RoomPhase) => {
+  if (phase === 'playing') {
+    pendingResult = null;
+    openScreen('game');
+    toast('Game started — good luck!');
+  } else {
+    openScreen('multi');
+  }
+};
+
+game.onRoomState = renderLobby;
+
+// Kicked from a room: bounce back to the title with an explanation.
+game.onKicked = (reason: string) => {
+  inGame = false;
+  pendingResult = null;
+  els.netLine.textContent = 'Not connected.';
+  delete els.netLine.dataset.status;
+  show(els.lobbyPanel, false);
+  renderScoreboard([]);
+  refreshProgress();
+  openScreen('title');
+  startAttractLoop();
+  toast(reason);
 };
 
 function renderScoreboard(players: PlayerInfo[]): void {
@@ -363,24 +517,13 @@ function renderScoreboard(players: PlayerInfo[]): void {
 game.onPlayersChanged = (players) => {
   renderScoreboard(players);
 
-  // Remember everyone but yourself as a recent player.
+  // Remember everyone but yourself as a recent player. The lobby list itself is
+  // rendered by renderLobby (game.onRoomState), which has the host/kick context.
   const others = players.filter((p) => p.id !== game.net.selfId);
   if (game.net.room && others.length > 0) {
     friends = rememberPlayers(friends, others, game.net.room, friendsSeenThisSession);
     saveFriends(friends);
     renderFriends();
-  }
-
-  els.lobbyList.innerHTML = '';
-  for (const p of players) {
-    const li = document.createElement('li');
-    const chip = document.createElement('span');
-    chip.className = 'chip';
-    chip.style.background = `hsl(${p.hue}, 95%, 68%)`;
-    const name = document.createElement('span');
-    name.textContent = `${p.name}${p.id === game.net.selfId ? ' (you)' : ''}`;
-    li.append(chip, name);
-    els.lobbyList.append(li);
   }
 };
 

@@ -1,15 +1,44 @@
-import type { ClientMsg, PlayerInfo, ServerMsg } from './protocol';
+import type { ClientMsg, RoomState, ServerMsg } from './protocol';
 
 type Handlers = {
   onWelcome: (m: Extract<ServerMsg, { t: 'welcome' }>) => void;
-  onPlayers: (players: PlayerInfo[]) => void;
+  onState: (state: RoomState) => void;
   onPos: (id: string, x: number, y: number, state: string) => void;
-  onHole: (hole: number, players: PlayerInfo[]) => void;
   onCountdown: (seconds: number) => void;
+  onKicked: (reason: string) => void;
   onStatus: (status: NetStatus, detail?: string) => void;
 };
 
 export type NetStatus = 'offline' | 'connecting' | 'online' | 'error';
+
+/**
+ * Resolves the WebSocket endpoint.
+ *
+ * Priority:
+ *   1. `VITE_WS_URL` baked in at build time — used when the client is hosted on a static
+ *      CDN (Netlify/Vercel) and the game server lives on a separate origin.
+ *   2. A runtime override in localStorage (`orbit-golf.serverUrl`) for quick testing.
+ *   3. Same-origin `/ws` — the default when one Node process serves both (npm start / Render).
+ */
+function resolveWsUrl(): string {
+  const buildTime = import.meta.env.VITE_WS_URL as string | undefined;
+  let override: string | null = null;
+  try {
+    override = localStorage.getItem('orbit-golf.serverUrl');
+  } catch {
+    override = null;
+  }
+  const raw = (override || buildTime || '').trim();
+  if (raw) {
+    // Accept http(s):// or ws(s):// and normalise to a ws(s) URL ending in /ws.
+    let url = raw.replace(/^http/, 'ws');
+    if (!/^wss?:\/\//.test(url)) url = `wss://${url}`;
+    if (!/\/ws$/.test(url)) url = url.replace(/\/$/, '') + '/ws';
+    return url;
+  }
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${location.host}/ws`;
+}
 
 export class NetClient {
   private ws: WebSocket | null = null;
@@ -23,17 +52,12 @@ export class NetClient {
     this.handlers = handlers;
   }
 
-  private url(): string {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${location.host}/ws`;
-  }
-
   connect(room: string, name: string, hue: number, seed?: number): void {
     this.disconnect();
     this.setStatus('connecting');
     let ws: WebSocket;
     try {
-      ws = new WebSocket(this.url());
+      ws = new WebSocket(resolveWsUrl());
     } catch (err) {
       this.setStatus('error', String(err));
       return;
@@ -58,17 +82,19 @@ export class NetClient {
           this.setStatus('online');
           this.handlers.onWelcome(msg);
           break;
-        case 'players':
-          this.handlers.onPlayers(msg.players);
+        case 'state':
+          this.handlers.onState(msg.state);
           break;
         case 'pos':
           this.handlers.onPos(msg.id, msg.x, msg.y, msg.state);
           break;
-        case 'hole':
-          this.handlers.onHole(msg.hole, msg.players);
-          break;
         case 'countdown':
           this.handlers.onCountdown(msg.seconds);
+          break;
+        case 'kicked':
+          // Suppress the impending close's "offline" churn; the kick handler drives the UI.
+          this.handlers.onKicked(msg.reason);
+          this.disconnect();
           break;
       }
     });
@@ -81,7 +107,7 @@ export class NetClient {
     });
 
     ws.addEventListener('error', () => {
-      this.setStatus('error', 'Could not reach the game server. Is `npm run dev:server` running?');
+      this.setStatus('error', 'Could not reach the game server. Is the multiplayer server running?');
     });
   }
 

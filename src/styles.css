@@ -719,6 +719,198 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+/* -------------------------------------------------------------- room lobby */
+
+.lobby-panel {
+  margin-top: 4px;
+  padding: 14px 0 4px;
+  border-top: 1px solid rgba(120, 170, 255, 0.1);
+}
+
+.lobby-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.lobby-head h3 {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.lobby-list .lobby-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lobby-list .you {
+  color: var(--accent-2);
+  font-weight: 700;
+}
+
+.lobby-list .crown {
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+
+.lobby-list .tag {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--panel-line);
+  border-radius: 999px;
+  padding: 2px 7px;
+  flex: 0 0 auto;
+}
+
+.lobby-list .tag.host {
+  color: #ffe066;
+  border-color: rgba(255, 224, 102, 0.4);
+}
+
+.lobby-list .tag.done {
+  color: var(--accent);
+  border-color: rgba(77, 255, 176, 0.4);
+}
+
+.lobby-list .kick {
+  border: 0;
+  background: transparent;
+  color: #ff8ba3;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 7px;
+  flex: 0 0 auto;
+  font-family: var(--body);
+}
+
+.lobby-list .kick:hover {
+  background: rgba(255, 139, 163, 0.14);
+}
+
+.host-controls {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(255, 224, 102, 0.18);
+  background: rgba(255, 224, 102, 0.04);
+  border-radius: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.host-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+
+.host-field > span:first-child {
+  color: rgba(230, 237, 251, 0.85);
+  flex: 0 0 auto;
+}
+
+.seg {
+  display: flex;
+  gap: 3px;
+  background: rgba(6, 10, 22, 0.7);
+  border: 1px solid var(--panel-line);
+  border-radius: 9px;
+  padding: 3px;
+}
+
+.seg-btn {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--body);
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.seg-btn:hover {
+  color: var(--ink);
+}
+
+.seg-btn.active {
+  background: var(--accent);
+  color: #032018;
+}
+
+.toggle-field input[type='checkbox'] {
+  width: 40px;
+  height: 22px;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.18s;
+  flex: 0 0 auto;
+}
+
+.toggle-field input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.18s;
+}
+
+.toggle-field input[type='checkbox']:checked {
+  background: var(--accent);
+}
+
+.toggle-field input[type='checkbox']:checked::after {
+  transform: translateX(18px);
+}
+
+.guest-note {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 9px;
+}
+
+.lobby-cta {
+  margin-top: 14px;
+}
+
+.lobby-cta .btn {
+  width: 100%;
+}
+
+.lobby-cta .waiting {
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+  padding: 10px;
 }
 
 /* ------------------------------------------------------------ career stats */

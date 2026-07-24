@@ -201,7 +201,35 @@
               <button class="btn btn-ghost" id="btn-leave">Leave</button>
             </div>
             <p class="net-line" id="net-line">Not connected.</p>
-            <ul class="lobby-list" id="lobby-list"></ul>
+
+            <!-- Lobby, shown only while connected -->
+            <section class="lobby-panel hidden" id="lobby-panel">
+              <div class="lobby-head">
+                <h3>Lobby <span class="muted-inline" id="lobby-phase"></span></h3>
+              </div>
+              <ul class="lobby-list" id="lobby-list"></ul>
+
+              <!-- Host-only room controls -->
+              <div class="host-controls hidden" id="host-controls">
+                <div class="host-field">
+                  <span>Aim guide</span>
+                  <div class="seg" id="seg-aim" role="group" aria-label="Aim guide policy">
+                    <button data-val="free" class="seg-btn">Free choice</button>
+                    <button data-val="on" class="seg-btn">Everyone on</button>
+                    <button data-val="off" class="seg-btn">Everyone off</button>
+                  </div>
+                </div>
+                <label class="host-field toggle-field">
+                  <span>Allow hole restarts</span>
+                  <input type="checkbox" id="cfg-restart" />
+                </label>
+              </div>
+
+              <!-- Read-only view of the rules for non-hosts -->
+              <p class="guest-note hidden" id="guest-note"></p>
+
+              <div class="lobby-cta" id="lobby-cta"></div>
+            </section>
 
             <section class="recent-section">
               <h3>Recent players</h3>

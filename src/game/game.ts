@@ -1,7 +1,7 @@
 import { sfx } from '../audio/sfx';
 import { clamp, damp, type Vec } from '../core/vec';
 import { NetClient, type NetStatus } from '../net/client';
-import type { PlayerInfo } from '../net/protocol';
+import { DEFAULT_ROOM_CONFIG, type PlayerInfo, type RoomConfig, type RoomPhase, type RoomState } from '../net/protocol';
 import { Camera, MAX_ZOOM } from '../render/camera';
 import { GravityField } from '../render/gravityfield';
 import { Particles } from '../render/particles';
@@ -57,6 +57,9 @@ export interface HudState {
   netStatus: NetStatus;
   room: string;
   waiting: boolean;
+  phase: RoomPhase;
+  isHost: boolean;
+  canRestart: boolean;
 }
 
 export interface HoleResult {
@@ -122,6 +125,9 @@ export class Game {
   net: NetClient;
   ghosts = new Map<string, Ghost>();
   players: PlayerInfo[] = [];
+  phase: RoomPhase = 'lobby';
+  hostId = '';
+  roomConfig: RoomConfig = { ...DEFAULT_ROOM_CONFIG };
   private waitingForOthers = false;
   private countdown = 0;
 
@@ -129,6 +135,11 @@ export class Game {
   onPlayersChanged: (p: PlayerInfo[]) => void = () => {};
   onNetStatus: (s: NetStatus, detail?: string) => void = () => {};
   onAchievements: (unlocked: Achievement[]) => void = () => {};
+  /** Fired on any room-level change so the lobby UI can re-render. */
+  onRoomState: () => void = () => {};
+  /** Fired when the game phase flips (lobby<->playing) so the shell can switch screens. */
+  onPhaseChange: (phase: RoomPhase) => void = () => {};
+  onKicked: (reason: string) => void = () => {};
 
   // Career stats
   stats: Stats = loadStats();
@@ -153,18 +164,15 @@ export class Game {
       onWelcome: (m) => {
         this.seed = m.seed;
         this.starfield = new Starfield(this.seed);
-        this.players = m.players;
-        this.syncGhosts();
-        this.loadHole(m.hole);
-        this.onPlayersChanged(this.players);
+        // Show hole 1 from the room's seed as the lobby backdrop; applyRoomState reloads
+        // the actual hole if we're joining a game already in progress.
+        this.phase = 'lobby';
+        this.loadHole(1);
+        this.applyRoomState(m.state, true);
         sfx.join();
         this.flash(`Joined room ${m.room}`);
       },
-      onPlayers: (players) => {
-        this.players = players;
-        this.syncGhosts();
-        this.onPlayersChanged(players);
-      },
+      onState: (state) => this.applyRoomState(state, false),
       onPos: (id, x, y, state) => {
         const g = this.ghosts.get(id);
         if (!g) return;
@@ -173,18 +181,12 @@ export class Game {
         g.info.state = state as PlayerInfo['state'];
         g.seen = performance.now();
       },
-      onHole: (hole, players) => {
-        this.players = players;
-        this.syncGhosts();
-        this.total = players.find((p) => p.id === this.net.selfId)?.total ?? this.total;
-        this.countdown = 0;
-        this.waitingForOthers = false;
-        this.loadHole(hole);
-        this.onPlayersChanged(players);
-        sfx.levelUp();
-      },
       onCountdown: (s) => {
         this.countdown = performance.now() + s * 1000;
+      },
+      onKicked: (reason) => {
+        this.resetMultiplayerState();
+        this.onKicked(reason);
       },
       onStatus: (s, detail) => this.onNetStatus(s, detail),
     });
@@ -309,12 +311,22 @@ export class Game {
    */
   restartHole(): void {
     const competitive = this.net.connected;
+    // The host can forbid restarts entirely for a stricter game.
+    if (competitive && !this.roomConfig.allowRestart) {
+      this.flash('The host has disabled hole restarts');
+      return;
+    }
     const carried = this.strokes;
     this.loadHole(this.holeIndex);
     if (!competitive) return;
     this.strokes = carried;
     // penalise() adds the stroke, re-tees the ball and broadcasts the new count.
     this.penalise('retry');
+  }
+
+  /** Whether the retry control should be offered right now. */
+  get canRestart(): boolean {
+    return !this.net.connected || this.roomConfig.allowRestart;
   }
 
   private finishHole(outcome: 'sunk' | 'skipped'): void {
@@ -670,7 +682,7 @@ export class Game {
     const { dir, power } = this.aimVector();
     if (power <= 0) return;
     const speed = power * MAX_SHOT_SPEED;
-    const seconds = this.settings.aimAssist;
+    const seconds = this.effectiveAimAssist();
     let points: Vec[] = [];
     let outcome = 'open';
     if (seconds > 0) {
@@ -844,6 +856,89 @@ export class Game {
 
   // ------------------------------------------------------------- multiplayer
 
+  get isHost(): boolean {
+    return this.net.connected && this.net.selfId !== '' && this.net.selfId === this.hostId;
+  }
+
+  /**
+   * Single entry point for every room-level update from the server. Detects phase and
+   * hole transitions so the shell can switch screens and the course can reload, and keeps
+   * the local scoreboard, ghosts and forced settings in sync.
+   */
+  private applyRoomState(state: RoomState, isWelcome: boolean): void {
+    // A welcome is always baselined from the lobby, so joining a game already in progress
+    // still counts as a phase transition and switches the joiner to the game screen.
+    const prevPhase = isWelcome ? 'lobby' : this.phase;
+    const prevHole = this.holeIndex;
+
+    this.phase = state.phase;
+    this.hostId = state.host;
+    this.roomConfig = state.config;
+    this.players = state.players;
+    this.total = state.players.find((p) => p.id === this.net.selfId)?.total ?? this.total;
+    this.syncGhosts();
+
+    const enteredPlay = state.phase === 'playing' && prevPhase !== 'playing';
+    const holeChanged = state.phase === 'playing' && state.hole !== prevHole;
+
+    if (enteredPlay || holeChanged) {
+      this.countdown = 0;
+      this.waitingForOthers = false;
+      this.loadHole(state.hole);
+      if (holeChanged && !enteredPlay) sfx.levelUp();
+    }
+
+    if (state.phase !== prevPhase) {
+      this.onPhaseChange(state.phase);
+      if (state.phase === 'playing') sfx.levelUp();
+    }
+
+    this.onPlayersChanged(this.players);
+    this.onRoomState();
+  }
+
+  private resetMultiplayerState(): void {
+    this.ghosts.clear();
+    this.players = [];
+    this.phase = 'lobby';
+    this.hostId = '';
+    this.roomConfig = { ...DEFAULT_ROOM_CONFIG };
+    this.waitingForOthers = false;
+    this.countdown = 0;
+  }
+
+  // ---- host actions (no-ops unless the server agrees you're the host) ----------
+
+  startMultiplayerGame(): void {
+    if (this.isHost) this.net.send({ t: 'start' });
+  }
+
+  returnRoomToLobby(): void {
+    if (this.isHost) this.net.send({ t: 'lobby' });
+  }
+
+  kickPlayer(id: string): void {
+    if (this.isHost && id !== this.net.selfId) this.net.send({ t: 'kick', id });
+  }
+
+  setRoomConfig(partial: Partial<RoomConfig>): void {
+    if (this.isHost) this.net.send({ t: 'config', config: partial });
+  }
+
+  /** Effective aim-guide seconds after applying any room policy. */
+  private effectiveAimAssist(): number {
+    if (!this.net.connected) return this.settings.aimAssist;
+    switch (this.roomConfig.aimPolicy) {
+      case 'off':
+        return 0;
+      case 'on':
+        // Guarantee a usable guide even for players who turned theirs off locally.
+        return Math.max(this.settings.aimAssist, 2.5);
+      default:
+        return this.settings.aimAssist;
+    }
+  }
+
   private syncGhosts(): void {
     const seen = new Set<string>();
     for (const info of this.players) {
@@ -890,6 +985,9 @@ export class Game {
       netStatus: this.net.status,
       room: this.net.room,
       waiting: this.waitingForOthers,
+      phase: this.phase,
+      isHost: this.isHost,
+      canRestart: this.canRestart,
     };
   }
 }
