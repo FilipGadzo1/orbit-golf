@@ -365,7 +365,7 @@ $('btn-join').addEventListener('click', () => {
   els.netLine.textContent = 'Connecting…';
   els.netLine.dataset.status = 'connecting';
   // The course is derived from the room code, so no seed needs to be exchanged.
-  game.net.connect(room, settings.playerName, settings.hue);
+  game.net.connect(room, settings.playerName, settings.hue, cosmetics.equipped);
 });
 
 $('btn-leave').addEventListener('click', () => {

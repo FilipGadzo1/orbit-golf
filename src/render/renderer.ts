@@ -11,6 +11,8 @@ export interface GhostView {
   y: number;
   state: string;
   strokes: number;
+  skin?: string;
+  accent?: string;
 }
 
 const OUTCOME_COLOR: Record<string, string> = {
@@ -290,7 +292,7 @@ export function drawGhost(ctx: CanvasRenderingContext2D, cam: Camera, g: GhostVi
   ctx.beginPath();
   ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = `hsla(${g.hue}, 100%, 82%, 0.95)`;
+  ctx.strokeStyle = g.accent ?? `hsla(${g.hue}, 100%, 82%, 0.95)`;
   ctx.lineWidth = 1.5;
   ctx.stroke();
 

@@ -6,6 +6,7 @@ export interface PlayerInfo {
   total: number;
   state: 'idle' | 'flying' | 'sunk' | 'lost';
   done: boolean;
+  skin: string;
 }
 
 /** How the aim guide is governed for a room. Set by the host. */
@@ -49,6 +50,11 @@ export interface PresenceMeta {
   total: number;
   state: PlayerInfo['state'];
   done: boolean;
+  /**
+   * The player's equipped cosmetic skin id. A static, low-frequency field — set on join
+   * and on re-equip only, never in the `pos` hot path or `RoomMeta`. Absent ⇒ 'classic'.
+   */
+  skin: string;
   /**
    * The hole number this player has finished. Advancement checks this against the current
    * hole so a `done` flag is never mistaken as valid for a *different* hole — the bug that

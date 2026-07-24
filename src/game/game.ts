@@ -17,6 +17,7 @@ import {
   type GhostView,
 } from '../render/renderer';
 import { Starfield } from '../render/starfield';
+import { skinById } from './cosmetics';
 import { generateLevel, surfacePoint, updateBodies } from './generator';
 import {
   BALL_RADIUS,
@@ -650,6 +651,8 @@ export class Game {
         y: g.render.y,
         state: g.info.state,
         strokes: g.info.strokes,
+        skin: g.info.skin,
+        accent: skinById(g.info.skin ?? 'classic').accent,
       };
       drawGhost(ctx, this.cam, view, this.settings.showGhostNames);
     }

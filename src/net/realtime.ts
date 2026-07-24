@@ -89,7 +89,7 @@ export class RealtimeClient {
 
   // ------------------------------------------------------------- connection
 
-  connect(room: string, name: string, hue: number): void {
+  connect(room: string, name: string, hue: number, skin = 'classic'): void {
     this.disconnect();
     const code = room.trim().toUpperCase().slice(0, 12) || 'LOBBY';
     const usingMemory = Boolean((globalThis as { __ORBIT_MEMORY_NET?: boolean }).__ORBIT_MEMORY_NET) || this.factory === memoryTransportFactory;
@@ -104,7 +104,7 @@ export class RealtimeClient {
     this.readyIds.clear();
     this.lastPosState = '';
     this.roomMeta = { phase: 'lobby', hole: 1, config: { ...DEFAULT_ROOM_CONFIG } };
-    this.meta = { ...blankMeta(), id: this.selfId, name: name.slice(0, 18) || 'Player', hue, joinedAt: Date.now() };
+    this.meta = { ...blankMeta(), id: this.selfId, name: name.slice(0, 18) || 'Player', hue, skin, joinedAt: Date.now() };
 
     this.setStatus('connecting');
     const t = this.factory(code, this.selfId);
@@ -263,6 +263,7 @@ export class RealtimeClient {
         strokes: meta.strokes ?? 0,
         total: meta.total ?? 0,
         state: meta.state ?? 'idle',
+        skin: meta.skin ?? 'classic',
         // "Done" for display means finished the current hole, not some earlier one.
         done: this.isFinished(id, meta),
       };
@@ -468,11 +469,14 @@ export class RealtimeClient {
   }
 
   /**
-   * Temporary no-op stub for Task 5 (cosmetics shop UI), so the shop's equip handler has
-   * something to call. Task 7 replaces the body with the real broadcast of the equipped
-   * skin id; it must stay a pure no-op until then — no touching election/advancement/presence.
+   * Broadcast the equipped cosmetic skin. A static, low-frequency Presence field: it updates
+   * local meta and re-tracks so the change propagates immediately. It never touches
+   * election/advancement, RoomMeta, or the `pos` hot path.
    */
-  setSkin(_id: string): void {}
+  setSkin(id: string): void {
+    this.meta.skin = id;
+    this.transport?.track({ ...this.meta });
+  }
 }
 
 function asMeta(x: unknown): PresenceMeta {
@@ -480,7 +484,7 @@ function asMeta(x: unknown): PresenceMeta {
 }
 
 function blankMeta(): PresenceMeta {
-  return { id: '', name: '', hue: 200, strokes: 0, total: 0, state: 'idle', done: false, doneHole: 0, joinedAt: 0 };
+  return { id: '', name: '', hue: 200, strokes: 0, total: 0, state: 'idle', done: false, doneHole: 0, joinedAt: 0, skin: 'classic' };
 }
 
 function randomId(): string {
