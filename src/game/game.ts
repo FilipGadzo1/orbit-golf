@@ -182,7 +182,8 @@ export class Game {
         g.seen = performance.now();
       },
       onCountdown: (s) => {
-        this.countdown = performance.now() + s * 1000;
+        // 0 = the host cancelled the countdown (a player turned out not to be finished).
+        this.countdown = s > 0 ? performance.now() + s * 1000 : 0;
       },
       onKicked: (reason) => {
         this.resetMultiplayerState();

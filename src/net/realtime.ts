@@ -65,10 +65,8 @@ export class RealtimeClient {
   private presence: PresenceMap = {};
   private roomMeta: RoomMeta = { phase: 'lobby', hole: 1, config: { ...DEFAULT_ROOM_CONFIG } };
 
-  private knownMembers = new Set<string>();
   /** Ids that have signalled "finished" for the current hole, via broadcast. */
   private readyIds = new Set<string>();
-  private lastHost = '';
   private advanceTimer: ReturnType<typeof setTimeout> | null = null;
   private welcomed = false;
   private lastPosSent = 0;
@@ -103,10 +101,8 @@ export class RealtimeClient {
     this.selfId = randomId();
     this.room = code;
     this.welcomed = false;
-    this.knownMembers.clear();
     this.readyIds.clear();
     this.lastPosState = '';
-    this.lastHost = '';
     this.roomMeta = { phase: 'lobby', hole: 1, config: { ...DEFAULT_ROOM_CONFIG } };
     this.meta = { ...blankMeta(), id: this.selfId, name: name.slice(0, 18) || 'Player', hue, joinedAt: Date.now() };
 
@@ -132,7 +128,7 @@ export class RealtimeClient {
     this.selfId = '';
     this.room = '';
     this.presence = {};
-    this.knownMembers.clear();
+    this.readyIds.clear();
     this.welcomed = false;
     this.setStatus('offline');
   }
@@ -168,20 +164,18 @@ export class RealtimeClient {
 
   private onPresence(p: PresenceMap): void {
     this.presence = p;
-    // Make sure our own metadata is represented even before the first sync round-trips.
-    if (!p[this.selfId]) p[this.selfId] = { ...this.meta };
 
-    const host = this.electHost();
-    const becameHost = host === this.selfId && this.lastHost !== this.selfId;
-    const members = Object.keys(p);
-    const newMember = members.some((k) => !this.knownMembers.has(k));
-    this.knownMembers = new Set(members);
-    this.lastHost = host;
-
-    if (host === this.selfId) {
-      // Assert authority to any newcomers, then check whether the hole is complete.
-      if (becameHost || newMember) this.broadcastState();
+    if (this.electHost() === this.selfId) {
+      // Re-assert current room state on every roster/score change. This is cheap (Presence
+      // changes are low frequency) and makes the room self-healing: a client that missed an
+      // earlier state broadcast — or just joined — converges on the next Presence event.
+      // Then re-evaluate advancement, which starts or cancels the countdown as needed.
+      this.broadcastState();
       this.checkAdvance();
+    } else if (this.advanceTimer) {
+      // We just stopped being host mid-countdown — drop our timer; the real host owns it.
+      clearTimeout(this.advanceTimer);
+      this.advanceTimer = null;
     }
 
     this.emitState();
@@ -222,11 +216,23 @@ export class RealtimeClient {
     }
   }
 
+  /**
+   * Presence with our own live metadata overlaid. The Presence echo of ourselves can lag a
+   * track(), and can even be transiently absent during a resync — trusting that could make
+   * the host miss its own state or mis-elect a host. Everything that reasons about the
+   * roster or the host goes through this so our own view is always current.
+   */
+  private mergedPresence(): PresenceMap {
+    const merged: PresenceMap = { ...this.presence };
+    if (this.selfId) merged[this.selfId] = { ...this.meta } as unknown as Record<string, unknown>;
+    return merged;
+  }
+
   /** Earliest joiner wins; ties broken by id so every client agrees. */
   private electHost(): string {
     let bestKey = '';
     let bestAt = Infinity;
-    for (const [key, raw] of Object.entries(this.presence)) {
+    for (const [key, raw] of Object.entries(this.mergedPresence())) {
       const at = Number(asMeta(raw).joinedAt ?? Infinity);
       if (bestKey === '' || at < bestAt || (at === bestAt && key < bestKey)) {
         bestAt = at;
@@ -236,23 +242,29 @@ export class RealtimeClient {
     return bestKey;
   }
 
-  private players(): PlayerInfo[] {
-    // Our own metadata is authoritative — the Presence echo of it can lag behind a
-    // track(), and if the host trusted that stale echo it could miss its own `done` and
-    // never advance. Overlay the live local meta so reads are always current.
-    const merged: PresenceMap = { ...this.presence };
-    if (this.selfId) merged[this.selfId] = { ...this.meta } as unknown as Record<string, unknown>;
+  /**
+   * True when a player has finished the *current* hole. A `done` flag is only trusted when
+   * its `doneHole` matches — otherwise a stale flag from the previous hole would let the
+   * room skip ahead. `readyIds` is the fast per-hole broadcast signal; `doneHole` is the
+   * durable Presence fallback that also survives host handoff.
+   */
+  private isFinished(id: string, meta: PresenceMeta): boolean {
+    return this.readyIds.has(id) || Number(meta.doneHole) === this.roomMeta.hole;
+  }
 
-    const list = Object.values(merged).map((m) => {
+  private players(): PlayerInfo[] {
+    const merged = this.mergedPresence();
+    const list = Object.entries(merged).map(([id, m]) => {
       const meta = asMeta(m);
       return {
-        id: meta.id,
+        id: meta.id || id,
         name: meta.name,
         hue: meta.hue,
         strokes: meta.strokes ?? 0,
         total: meta.total ?? 0,
         state: meta.state ?? 'idle',
-        done: Boolean(meta.done),
+        // "Done" for display means finished the current hole, not some earlier one.
+        done: this.isFinished(id, meta),
       };
     });
     // Stable order: join time, then id.
@@ -331,21 +343,50 @@ export class RealtimeClient {
     if (this.amHost) this.checkAdvance();
   }
 
-  private checkAdvance(): void {
-    if (this.roomMeta.phase !== 'playing' || this.advanceTimer) return;
-    const players = this.players();
-    // A player counts as finished if the immediate broadcast said so OR their durable
-    // Presence flag says so. The broadcast is fast and reliable; the Presence flag covers
-    // host handoff (a fresh host reconstructs completion from Presence it already has).
-    if (players.length === 0 || !players.every((p) => p.done || this.readyIds.has(p.id))) return;
+  /** True when every player currently in the room has finished the current hole. */
+  private everyoneFinished(): boolean {
+    const merged = this.mergedPresence();
+    const ids = Object.keys(merged);
+    if (ids.length === 0) return false;
+    return ids.every((id) => this.isFinished(id, asMeta(merged[id])));
+  }
 
-    this.transport?.broadcast('countdown', { seconds: Math.round(advanceDelayMs / 1000) } satisfies CountdownPayload);
-    this.handlers.onCountdown(Math.round(advanceDelayMs / 1000));
+  /**
+   * Host-only. Runs on every roster/readiness change. The countdown doubles as a settling
+   * window: if everyone appears finished we start it, but if an unfinished player shows up
+   * before it fires — including one who was briefly missing during a Presence resync — we
+   * cancel it. Advancement is re-verified at fire time, so a transient blip can never skip
+   * the hole ahead of a player who hasn't actually finished.
+   */
+  private checkAdvance(): void {
+    if (!this.amHost || this.roomMeta.phase !== 'playing') return;
+
+    if (this.everyoneFinished()) {
+      if (!this.advanceTimer) this.startCountdown();
+    } else {
+      this.cancelCountdown();
+    }
+  }
+
+  private startCountdown(): void {
+    const secs = Math.max(1, Math.round(advanceDelayMs / 1000));
+    this.transport?.broadcast('countdown', { seconds: secs } satisfies CountdownPayload);
+    this.handlers.onCountdown(secs);
     this.advanceTimer = setTimeout(() => {
       this.advanceTimer = null;
-      if (!this.amHost) return;
+      // Re-verify — the roster or readiness may have changed during the countdown.
+      if (!this.amHost || !this.everyoneFinished()) return;
       this.commitRoomMeta({ ...this.roomMeta, hole: this.roomMeta.hole + 1 });
     }, advanceDelayMs);
+  }
+
+  private cancelCountdown(): void {
+    if (!this.advanceTimer) return;
+    clearTimeout(this.advanceTimer);
+    this.advanceTimer = null;
+    // Tell everyone to clear the countdown UI.
+    this.transport?.broadcast('countdown', { seconds: 0 } satisfies CountdownPayload);
+    this.handlers.onCountdown(0);
   }
 
   private trackMeta(): void {
@@ -384,6 +425,7 @@ export class RealtimeClient {
 
   markReady(): void {
     this.meta.done = true;
+    this.meta.doneHole = this.roomMeta.hole;
     this.trackMeta();
     this.announceReady();
   }
@@ -392,6 +434,7 @@ export class RealtimeClient {
     this.meta.strokes = Math.max(0, Math.min(999, n | 0));
     this.meta.state = result === 'sunk' ? 'sunk' : 'lost';
     this.meta.done = true;
+    this.meta.doneHole = this.roomMeta.hole;
     this.trackMeta();
     this.announceReady();
   }
@@ -430,7 +473,7 @@ function asMeta(x: unknown): PresenceMeta {
 }
 
 function blankMeta(): PresenceMeta {
-  return { id: '', name: '', hue: 200, strokes: 0, total: 0, state: 'idle', done: false, joinedAt: 0 };
+  return { id: '', name: '', hue: 200, strokes: 0, total: 0, state: 'idle', done: false, doneHole: 0, joinedAt: 0 };
 }
 
 function randomId(): string {

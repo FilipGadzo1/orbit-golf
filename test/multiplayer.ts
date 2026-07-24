@@ -7,7 +7,7 @@
  * advancement, and host reassignment.
  */
 import { RealtimeClient, setAdvanceDelay } from '../src/net/realtime';
-import { memoryTransportFactory, resetMemoryRelays } from '../src/net/transport';
+import { memoryTransportFactory, memoryTransports, resetMemoryRelays } from '../src/net/transport';
 import type { RoomState } from '../src/net/protocol';
 
 let failures = 0;
@@ -191,6 +191,47 @@ async function main(): Promise<void> {
   void linId;
 
   c.client.disconnect();
+
+  // ---- stale-done must not skip a hole (the reported bug) --------------------
+  // A player who misses the advance broadcast keeps a `done` flag from the PREVIOUS hole.
+  // The host must not treat that as finishing the CURRENT hole and skip ahead.
+  resetMemoryRelays();
+  const host = new Peer('Host');
+  const slow = new Peer('Slow');
+  host.join('SKIP');
+  await sleep(6);
+  slow.join('SKIP');
+  await sleep(20);
+  host.client.start();
+  await sleep(20);
+  check('both players start on hole 1', host.hole === 1 && slow.hole === 1, `${host.hole}/${slow.hole}`);
+
+  // Slow stops receiving room-state broadcasts — it will never learn the hole advanced.
+  memoryTransports.get(slow.client.selfId)!.blockedEvents.add('state');
+
+  // Both finish hole 1 → room advances to hole 2 (Slow is stuck on hole 1 with done-for-1).
+  slow.client.markDone(3, 'sunk');
+  host.client.markDone(3, 'sunk');
+  await sleep(120);
+  check('host advances to hole 2', host.hole === 2, `host hole=${host.hole}`);
+  check('the stuck player is still on hole 1', slow.hole === 1, `slow hole=${slow.hole}`);
+
+  // Host finishes hole 2. Slow has NOT played hole 2 (its done is for hole 1) → NO skip.
+  host.client.markDone(2, 'sunk');
+  await sleep(120);
+  check('the room does NOT skip ahead while a player is behind', host.hole === 2, `host hole=${host.hole}`);
+
+  // Recovery: unblock Slow; the host re-asserts state on the next Presence change.
+  memoryTransports.get(slow.client.selfId)!.blockedEvents.delete('state');
+  slow.client.markStrokes(1);
+  await sleep(30);
+  check('a lagging player catches up to the current hole', slow.hole === 2, `slow hole=${slow.hole}`);
+  slow.client.markDone(4, 'sunk');
+  await sleep(120);
+  check('the room advances once the lagging player finishes', host.hole === 3 && slow.hole === 3, `${host.hole}/${slow.hole}`);
+
+  host.client.disconnect();
+  slow.client.disconnect();
 
   // ---- determinism: same room code → same seed, different code → different --
   resetMemoryRelays();

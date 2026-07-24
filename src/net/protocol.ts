@@ -49,6 +49,12 @@ export interface PresenceMeta {
   total: number;
   state: PlayerInfo['state'];
   done: boolean;
+  /**
+   * The hole number this player has finished. Advancement checks this against the current
+   * hole so a `done` flag is never mistaken as valid for a *different* hole — the bug that
+   * let the room skip ahead before everyone finished.
+   */
+  doneHole: number;
   /** Client wall-clock at join, used for deterministic host election. */
   joinedAt: number;
 }

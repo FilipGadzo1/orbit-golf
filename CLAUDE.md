@@ -78,6 +78,27 @@ a hole change banks strokes into total and resets. The advance countdown delay i
 Scores stay honest as before: multiplayer restart carries strokes + a penalty, and the
 replay button is hidden once a hole is scored.
 
+**Hole advancement is the subtle part** — three rules keep it correct under Supabase's
+async, occasionally-inconsistent Presence:
+1. *Finished-for-which-hole.* A player is "finished" only if their `ready` broadcast or
+   their Presence `doneHole` matches the **current** hole. Trusting a bare `done` flag let
+   the room skip ahead: a client that hadn't yet processed an advance still showed
+   `done=true` from the previous hole. Never reintroduce a hole-agnostic done check.
+2. *Countdown as a settling window.* When everyone appears finished the host starts the
+   countdown; if an unfinished player (re)appears before it fires — e.g. a Presence resync
+   that briefly dropped then restored them — it's cancelled, and advancement is re-verified
+   at fire time. This absorbs transient roster/host blips.
+3. *Self-healing state.* The host re-broadcasts room state on every Presence change, and
+   election/roster reads go through `mergedPresence()` (own live meta overlaid), so a
+   client that missed a `state` broadcast or is transiently absent from its own Presence
+   converges rather than desyncing.
+
+Position broadcasts only stream while the ball is flying (one final send at rest),
+otherwise finished players would saturate the channel's rate budget and starve the
+Presence/`ready` signals. `test/multiplayer.ts` covers all of this, including a
+`blockedEvents` seam on the in-memory transport that simulates a client missing the
+advance broadcast — reverting rule 1 makes that test fail with a hole-skip.
+
 ## Physics scale
 
 `G = 560` and `mass = density × radius²` are chosen together so that surface gravity works

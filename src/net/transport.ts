@@ -160,6 +160,7 @@ function relayFor(room: string): Relay {
 /** Clears all in-memory rooms — handy between test cases. */
 export function resetMemoryRelays(): void {
   relays.clear();
+  memoryTransports.clear();
 }
 
 class InMemoryTransport implements Transport {
@@ -168,9 +169,12 @@ class InMemoryTransport implements Transport {
   private presenceCb: (p: PresenceMap) => void = () => {};
   private messageCb: (event: string, payload: unknown) => void = () => {};
   private open = false;
+  /** Test-only: broadcast event names to drop, simulating a client that misses messages. */
+  readonly blockedEvents = new Set<string>();
 
   constructor(room: string, readonly selfKey: string) {
     this.relay = relayFor(room);
+    memoryTransports.set(selfKey, this);
   }
 
   onStatus(cb: (s: TransportStatus, detail?: string) => void): void {
@@ -214,9 +218,12 @@ class InMemoryTransport implements Transport {
     if (this.open) this.presenceCb(p);
   }
   deliver(event: string, payload: unknown): void {
-    if (this.open) this.messageCb(event, payload);
+    if (this.open && !this.blockedEvents.has(event)) this.messageCb(event, payload);
   }
 }
+
+/** Test-only registry so a test can reach a specific client's transport by its key. */
+export const memoryTransports = new Map<string, InMemoryTransport>();
 
 export const memoryTransportFactory: TransportFactory = (room, selfKey) =>
   new InMemoryTransport(room, selfKey);
