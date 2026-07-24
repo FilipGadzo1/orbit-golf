@@ -7,6 +7,7 @@ import {
   type PlayerInfo,
   type PosPayload,
   type PresenceMeta,
+  type ReadyPayload,
   type RoomConfig,
   type RoomMeta,
   type RoomState,
@@ -65,10 +66,13 @@ export class RealtimeClient {
   private roomMeta: RoomMeta = { phase: 'lobby', hole: 1, config: { ...DEFAULT_ROOM_CONFIG } };
 
   private knownMembers = new Set<string>();
+  /** Ids that have signalled "finished" for the current hole, via broadcast. */
+  private readyIds = new Set<string>();
   private lastHost = '';
   private advanceTimer: ReturnType<typeof setTimeout> | null = null;
   private welcomed = false;
   private lastPosSent = 0;
+  private lastPosState = '';
 
   constructor(handlers: RealtimeHandlers, factory?: TransportFactory) {
     this.handlers = handlers;
@@ -100,6 +104,8 @@ export class RealtimeClient {
     this.room = code;
     this.welcomed = false;
     this.knownMembers.clear();
+    this.readyIds.clear();
+    this.lastPosState = '';
     this.lastHost = '';
     this.roomMeta = { phase: 'lobby', hole: 1, config: { ...DEFAULT_ROOM_CONFIG } };
     this.meta = { ...blankMeta(), id: this.selfId, name: name.slice(0, 18) || 'Player', hue, joinedAt: Date.now() };
@@ -207,6 +213,12 @@ export class RealtimeClient {
         this.handlers.onCountdown((payload as CountdownPayload).seconds);
         break;
       }
+      case 'ready': {
+        const s = payload as ReadyPayload;
+        // Ignore stale readys from a previous hole.
+        if (s.hole === this.roomMeta.hole) this.noteReady(s.id);
+        break;
+      }
     }
   }
 
@@ -225,7 +237,13 @@ export class RealtimeClient {
   }
 
   private players(): PlayerInfo[] {
-    const list = Object.values(this.presence).map((m) => {
+    // Our own metadata is authoritative — the Presence echo of it can lag behind a
+    // track(), and if the host trusted that stale echo it could miss its own `done` and
+    // never advance. Overlay the live local meta so reads are always current.
+    const merged: PresenceMap = { ...this.presence };
+    if (this.selfId) merged[this.selfId] = { ...this.meta } as unknown as Record<string, unknown>;
+
+    const list = Object.values(merged).map((m) => {
       const meta = asMeta(m);
       return {
         id: meta.id,
@@ -239,8 +257,8 @@ export class RealtimeClient {
     });
     // Stable order: join time, then id.
     list.sort((a, b) => {
-      const am = asMeta(this.presence[a.id]);
-      const bm = asMeta(this.presence[b.id]);
+      const am = asMeta(merged[a.id]);
+      const bm = asMeta(merged[b.id]);
       return (am?.joinedAt ?? 0) - (bm?.joinedAt ?? 0) || a.id.localeCompare(b.id);
     });
     return list;
@@ -279,6 +297,9 @@ export class RealtimeClient {
     const holeChanged = next.hole !== prev.hole;
     this.roomMeta = next;
 
+    // Each new hole (or phase change) starts the finished-set fresh.
+    if (phaseChanged || holeChanged) this.readyIds.clear();
+
     if (phaseChanged) {
       // A fresh game (or return to lobby) zeroes the whole card.
       this.meta.total = 0;
@@ -304,10 +325,19 @@ export class RealtimeClient {
     this.broadcastState();
   }
 
+  /** Records that a player finished the current hole and re-checks advancement. */
+  private noteReady(id: string): void {
+    this.readyIds.add(id);
+    if (this.amHost) this.checkAdvance();
+  }
+
   private checkAdvance(): void {
     if (this.roomMeta.phase !== 'playing' || this.advanceTimer) return;
     const players = this.players();
-    if (players.length === 0 || !players.every((p) => p.done)) return;
+    // A player counts as finished if the immediate broadcast said so OR their durable
+    // Presence flag says so. The broadcast is fast and reliable; the Presence flag covers
+    // host handoff (a fresh host reconstructs completion from Presence it already has).
+    if (players.length === 0 || !players.every((p) => p.done || this.readyIds.has(p.id))) return;
 
     this.transport?.broadcast('countdown', { seconds: Math.round(advanceDelayMs / 1000) } satisfies CountdownPayload);
     this.handlers.onCountdown(Math.round(advanceDelayMs / 1000));
@@ -355,7 +385,7 @@ export class RealtimeClient {
   markReady(): void {
     this.meta.done = true;
     this.trackMeta();
-    if (this.amHost) this.checkAdvance();
+    this.announceReady();
   }
 
   markDone(n: number, result: 'sunk' | 'lost'): void {
@@ -363,12 +393,33 @@ export class RealtimeClient {
     this.meta.state = result === 'sunk' ? 'sunk' : 'lost';
     this.meta.done = true;
     this.trackMeta();
-    if (this.amHost) this.checkAdvance();
+    this.announceReady();
   }
 
-  /** Throttled position broadcast — ghosts only need ~20 Hz. */
+  /** Tell the room we've finished this hole via the fast broadcast path, and note it locally. */
+  private announceReady(): void {
+    this.transport?.broadcast('ready', { id: this.selfId, hole: this.roomMeta.hole } satisfies ReadyPayload);
+    this.noteReady(this.selfId);
+  }
+
+  /**
+   * Position broadcast for ghosts. While the ball is flying it streams at ~20 Hz; when
+   * the ball is at rest (idle/sunk/lost) it sends a single update on the state change and
+   * then goes quiet.
+   *
+   * This matters a lot: the game loop calls this every frame for everyone, including
+   * players sitting on the result screen. If finished players kept streaming ~20 Hz, they
+   * would saturate the channel's per-client rate budget and starve the Presence `track()`
+   * that carries each player's `done` flag — so the host would never see everyone finish
+   * and the room would hang on "waiting for other players".
+   */
   sendPos(x: number, y: number, state: string, now: number): void {
-    if (!this.connected || now - this.lastPosSent < 50) return;
+    if (!this.connected) return;
+    const changed = state !== this.lastPosState;
+    // At rest: only send when the state changes. Flying: throttle to 20 Hz.
+    if (!changed && state !== 'flying') return;
+    if (!changed && now - this.lastPosSent < 50) return;
+    this.lastPosState = state;
     this.lastPosSent = now;
     this.transport?.broadcast('pos', { id: this.selfId, x, y, state } satisfies PosPayload);
   }

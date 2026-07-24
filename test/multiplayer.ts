@@ -127,14 +127,28 @@ async function main(): Promise<void> {
 
   // ---- positions (ghosts) ---------------------------------------------------
   const beforeGhost = a.ghostMoves;
-  b.client.sendPos(100, 200, 'flying', 100000);
+  let t = 100000;
+  for (let i = 0; i < 5; i++) b.client.sendPos(100 + i, 200, 'flying', (t += 60));
   await sleep(10);
-  check('position broadcasts reach other peers as ghosts', a.ghostMoves > beforeGhost, `moves=${a.ghostMoves}`);
+  check('flying positions stream to other peers as ghosts', a.ghostMoves - beforeGhost >= 3, `moves=${a.ghostMoves - beforeGhost}`);
   check('a peer does not receive its own position', b.ghostMoves === 0, `self moves=${b.ghostMoves}`);
 
+  // A finished player must go quiet — repeated idle sends must NOT keep streaming, or they
+  // would starve Presence and hang advancement (the bug this guards).
+  const beforeIdle = a.ghostMoves;
+  for (let i = 0; i < 20; i++) b.client.sendPos(500, 500, 'idle', (t += 60));
+  await sleep(10);
+  check('a resting player stops flooding the channel', a.ghostMoves - beforeIdle <= 1, `idle sends delivered=${a.ghostMoves - beforeIdle}`);
+
   // ---- hole advancement -----------------------------------------------------
+  // Every player keeps "spamming" idle positions after finishing; advancement must still
+  // happen (broadcast-based readiness, not starved by position traffic).
   a.client.markDone(3, 'sunk');
   b.client.markDone(4, 'sunk');
+  for (let i = 0; i < 10; i++) {
+    a.client.sendPos(1, 1, 'sunk', (t += 60));
+    b.client.sendPos(2, 2, 'sunk', (t += 60));
+  }
   await sleep(20);
   check('room does not advance until everyone is done', a.hole === 1, `hole=${a.hole}`);
   c.client.markDone(2, 'sunk');
@@ -142,6 +156,15 @@ async function main(): Promise<void> {
   check('room advances once every player is done', a.hole === 2 && b.hole === 2 && c.hole === 2, `${a.hole}/${b.hole}/${c.hole}`);
   check('scores carry into the running total after a hole', (a.players.find((p) => p.name === 'Ada')?.total ?? -1) === 3, `total=${a.players.find((p) => p.name === 'Ada')?.total}`);
   check('the done flags reset for the new hole', a.players.every((p) => !p.done), JSON.stringify(a.players.map((p) => p.done)));
+
+  // Advance again with the HOST finishing last — the ordering most prone to a self-stall.
+  b.client.markDone(3, 'sunk');
+  c.client.markReady();
+  await sleep(30);
+  check('room waits while the host is still playing', a.hole === 2, `hole=${a.hole}`);
+  a.client.markDone(2, 'sunk'); // host finishes last
+  await sleep(120);
+  check('room advances when the host finishes last', a.hole === 3 && b.hole === 3 && c.hole === 3, `${a.hole}/${b.hole}/${c.hole}`);
 
   // ---- kick -----------------------------------------------------------------
   const graceId = a.players.find((p) => p.name === 'Grace')?.id ?? '';
