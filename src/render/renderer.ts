@@ -11,6 +11,8 @@ export interface GhostView {
   y: number;
   state: string;
   strokes: number;
+  skin?: string;
+  accent?: string;
 }
 
 const OUTCOME_COLOR: Record<string, string> = {
@@ -19,6 +21,18 @@ const OUTCOME_COLOR: Record<string, string> = {
   lost: 'rgba(255, 170, 90, ',
   crush: 'rgba(255, 100, 130, ',
   stop: 'rgba(190, 205, 230, ',
+};
+
+// Higher-contrast, CVD-distinguishable alternates, keyed the same as OUTCOME_COLOR.
+const OUTCOME_COLOR_CB: Record<string, string> = {
+  open: 'rgba(80, 160, 255, ',   // blue
+  sunk: 'rgba(255, 255, 255, ',  // white
+  lost: 'rgba(255, 176, 0, ',    // amber
+  crush: 'rgba(0, 0, 0, ',       // black core (still visible via the dotted glow)
+  stop: 'rgba(150, 150, 150, ',
+};
+const OUTCOME_LABEL: Record<string, string> = {
+  open: 'FLY', sunk: 'SINK', lost: 'OUT', crush: 'HOLE', stop: 'STOP',
 };
 
 export function drawBody(ctx: CanvasRenderingContext2D, cam: Camera, b: Body, time: number): void {
@@ -226,21 +240,27 @@ export function drawTrail(ctx: CanvasRenderingContext2D, cam: Camera, trail: Vec
   ctx.restore();
 }
 
-export function drawBall(ctx: CanvasRenderingContext2D, cam: Camera, ball: Ball, time: number): void {
+export function drawBall(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  ball: Ball,
+  time: number,
+  skin: { body: [string, string]; glow: string },
+): void {
   if (ball.state === 'lost') return;
   const s = cam.worldToScreen(ball.pos);
   const r = Math.max(3.2, ball.radius * cam.zoom);
 
   const glowR = r * 4;
   const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, glowR);
-  g.addColorStop(0, 'rgba(190, 235, 255, 0.5)');
+  g.addColorStop(0, skin.glow);
   g.addColorStop(1, 'rgba(120, 200, 255, 0)');
   ctx.fillStyle = g;
   ctx.fillRect(s.x - glowR, s.y - glowR, glowR * 2, glowR * 2);
 
   const body = ctx.createRadialGradient(s.x - r * 0.35, s.y - r * 0.4, r * 0.1, s.x, s.y, r);
-  body.addColorStop(0, '#ffffff');
-  body.addColorStop(1, '#9fc4e8');
+  body.addColorStop(0, skin.body[0]);
+  body.addColorStop(1, skin.body[1]);
   ctx.fillStyle = body;
   ctx.beginPath();
   ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
@@ -272,7 +292,7 @@ export function drawGhost(ctx: CanvasRenderingContext2D, cam: Camera, g: GhostVi
   ctx.beginPath();
   ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = `hsla(${g.hue}, 100%, 82%, 0.95)`;
+  ctx.strokeStyle = g.accent ?? `hsla(${g.hue}, 100%, 82%, 0.95)`;
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
@@ -295,8 +315,10 @@ export function drawAim(
   power: number,
   aimDir: Vec,
   time: number,
+  colorblind: boolean,
 ): void {
-  const base = OUTCOME_COLOR[outcome] ?? OUTCOME_COLOR.open;
+  const palette = colorblind ? OUTCOME_COLOR_CB : OUTCOME_COLOR;
+  const base = palette[outcome] ?? palette.open;
   ctx.save();
 
   // Predicted path as marching dots — spacing conveys speed.
@@ -356,6 +378,20 @@ export function drawAim(
   ctx.arc(o.x, o.y, 18, -Math.PI / 2, -Math.PI / 2 + power * Math.PI * 2);
   ctx.stroke();
   ctx.restore();
+
+  if (colorblind && points.length) {
+    const end = cam.worldToScreen(points[points.length - 1]);
+    ctx.save();
+    ctx.font = '700 12px ui-sans-serif, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.lineWidth = 3;
+    const txt = OUTCOME_LABEL[outcome] ?? '';
+    ctx.strokeText(txt, end.x, end.y - 14);
+    ctx.fillText(txt, end.x, end.y - 14);
+    ctx.restore();
+  }
 }
 
 /** Screen-edge chevron pointing at an off-screen world point. */

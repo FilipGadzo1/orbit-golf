@@ -99,6 +99,10 @@ Presence/`ready` signals. `test/multiplayer.ts` covers all of this, including a
 `blockedEvents` seam on the in-memory transport that simulates a client missing the
 advance broadcast — reverting rule 1 makes that test fail with a hole-skip.
 
+The equipped cosmetic skin id travels as a static `skin` field on `PresenceMeta` (set on
+join and on re-equip only), defaulted to `'classic'` and read with a `?? 'classic'`
+fallback — it is not part of `RoomMeta` or the `pos` broadcast.
+
 ## Physics scale
 
 `G = 560` and `mass = density × radius²` are chosen together so that surface gravity works
@@ -140,9 +144,10 @@ system, just `getElementById` and listeners.
 Rendering is immediate-mode Canvas 2D with no scene graph. `src/render/*` exports plain
 draw functions taking `(ctx, camera, …)`; `Camera.worldToScreen` is the only transform.
 
-Persistence is three independent localStorage modules, each with its own key and
+Persistence is four independent localStorage modules, each with its own key and
 `load`/`save` pair: `settings.ts`, `stats.ts` (migrates the legacy `progress.v1` record),
-`friends.ts`. Nothing else touches localStorage.
+`friends.ts`, `cosmetics.ts` (key `orbit-golf.cosmetics.v1`, Stardust balance + owned/
+equipped ball skins). Nothing else touches localStorage.
 
 ## Test hooks in production code
 

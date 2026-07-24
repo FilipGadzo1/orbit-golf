@@ -665,6 +665,48 @@ body {
   border-top: 1px solid var(--panel-line);
 }
 
+/* ------------------------------------------------------------------- shop */
+
+.balance {
+  font-family: var(--display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.shop-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(6, 10, 22, 0.5);
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+}
+
+.shop-swatch {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.15);
+}
+
+.shop-name {
+  flex: 1;
+  font-size: 13px;
+  color: rgba(230, 237, 251, 0.9);
+}
+
 /* ------------------------------------------------------------ multiplayer */
 
 .muted {
@@ -1254,6 +1296,15 @@ body {
 .ach-toast .ach-name {
   font-size: 13px;
   font-weight: 700;
+}
+
+.ach-toast.stardust {
+  border-color: rgba(242, 193, 78, 0.45);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5), 0 0 24px rgba(242, 193, 78, 0.14);
+}
+
+.ach-toast.stardust .ach-kicker {
+  color: #f2c14e;
 }
 
 /* ------------------------------------------------------------------ toast */

@@ -1,4 +1,5 @@
 import './styles.css';
+import { music } from './audio/music';
 import { sfx } from './audio/sfx';
 import { hashString } from './core/rng';
 import { Game, type HoleResult } from './game/game';
@@ -13,6 +14,7 @@ import {
   type KnownPlayer,
 } from './game/friends';
 import { loadSettings, randomName, saveSettings, type Settings } from './game/settings';
+import { awardFor, buy, equip, grant, loadCosmetics, saveCosmetics, skinById, SKINS } from './game/cosmetics';
 import {
   ACHIEVEMENTS,
   averageStrokes,
@@ -34,8 +36,15 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
 };
 
 const settings: Settings = loadSettings();
+const cosmetics = loadCosmetics();
+
+function applyEquippedSkin(): void {
+  const sk = skinById(cosmetics.equipped);
+  game.ballSkin = { body: sk.body, glow: sk.glow };
+}
 const canvas = $<HTMLCanvasElement>('stage');
 const game = new Game(canvas, settings);
+applyEquippedSkin();
 
 const els = {
   hud: $('hud'),
@@ -72,6 +81,9 @@ const els = {
   achCount: $('ach-count'),
   achToasts: $('ach-toasts'),
   friendList: $<HTMLUListElement>('friend-list'),
+  shop: $('shop'),
+  shopBalance: $('shop-balance'),
+  shopList: $('shop-list'),
 };
 
 let toastTimer = 0;
@@ -84,7 +96,7 @@ function toast(message: string): void {
 
 // ------------------------------------------------------------------ screens
 
-type Screen = 'title' | 'game' | 'result' | 'settings' | 'multi' | 'stats';
+type Screen = 'title' | 'game' | 'result' | 'settings' | 'multi' | 'stats' | 'shop';
 let inGame = false;
 
 function show(el: HTMLElement, visible: boolean): void {
@@ -97,8 +109,10 @@ function openScreen(screen: Screen): void {
   show(els.settings, screen === 'settings');
   show(els.multi, screen === 'multi');
   show(els.stats, screen === 'stats');
+  show(els.shop, screen === 'shop');
   show(els.hud, inGame);
   if (screen === 'stats') renderStats();
+  if (screen === 'shop') renderShop();
   if (screen === 'multi') updateMultiConfigNotice();
   canvas.style.cursor = screen === 'game' ? 'crosshair' : 'default';
 }
@@ -129,6 +143,8 @@ function backgroundScreen(): Screen {
 
 function startGame(seedText?: string): void {
   sfx.unlock();
+  music.unlock();
+  if (settings.musicVolume > 0) music.start();
   const raw = (seedText ?? els.seedInput.value).trim();
   const seed = raw ? (/^\d+$/.test(raw) ? Number(raw) >>> 0 : hashString(raw)) : undefined;
   inGame = true;
@@ -193,6 +209,12 @@ let pendingResult: HoleResult | null = null;
 
 game.onHoleComplete = (r) => {
   pendingResult = r;
+  if (r.outcome === 'sunk' || r.outcome === 'skipped') {
+    const reward = awardFor({ strokes: r.strokes, par: r.par, outcome: r.outcome === 'sunk' ? 'sunk' : 'lost' });
+    grant(cosmetics, reward);
+    saveCosmetics(cosmetics);
+    showStardustToast(reward);
+  }
   // Let the sink animation and particles breathe before the card lands.
   setTimeout(() => {
     if (!pendingResult) return;
@@ -273,8 +295,18 @@ bindToggle('set-orbits', 'showOrbits');
 bindToggle('set-trail', 'showTrail');
 bindToggle('set-shake', 'screenShake');
 bindToggle('set-names', 'showGhostNames');
+bindToggle('set-colorblind', 'colorblind');
 
 bindRange('set-volume', 'volume', (v) => `${Math.round(v * 100)}%`, 'volume-readout');
+$<HTMLInputElement>('set-music').value = String(settings.musicVolume);
+$('music-readout').textContent = `${Math.round(settings.musicVolume * 100)}%`;
+music.volume = settings.musicVolume;
+$<HTMLInputElement>('set-music').addEventListener('input', (e) => {
+  settings.musicVolume = Number((e.target as HTMLInputElement).value);
+  $('music-readout').textContent = `${Math.round(settings.musicVolume * 100)}%`;
+  music.setVolume(settings.musicVolume);
+  saveSettings(settings);
+});
 bindRange('set-aim', 'aimAssist', (v) => (v === 0 ? 'off' : `${v.toFixed(1)}s`), 'aim-readout');
 bindRange('set-gravity', 'gravityIntensity', (v) => `${Math.round(v * 100)}%`, 'gravity-readout');
 bindRange('set-hue', 'hue', (v) => String(Math.round(v)));
@@ -319,6 +351,8 @@ $('btn-random-room').addEventListener('click', () => {
 
 $('btn-join').addEventListener('click', () => {
   sfx.unlock();
+  music.unlock();
+  if (settings.musicVolume > 0) music.start();
   const room = els.roomInput.value.trim().toUpperCase();
   if (!room) {
     toast('Enter a room code first');
@@ -332,7 +366,7 @@ $('btn-join').addEventListener('click', () => {
   els.netLine.textContent = 'Connecting…';
   els.netLine.dataset.status = 'connecting';
   // The course is derived from the room code, so no seed needs to be exchanged.
-  game.net.connect(room, settings.playerName, settings.hue);
+  game.net.connect(room, settings.playerName, settings.hue, cosmetics.equipped);
 });
 
 $('btn-leave').addEventListener('click', () => {
@@ -683,6 +717,65 @@ const closeStats = () => {
 $('btn-close-stats').addEventListener('click', closeStats);
 $('btn-close-stats-2').addEventListener('click', closeStats);
 
+function renderShop(): void {
+  els.shopBalance.textContent = `✦ ${cosmetics.balance}`;
+  els.shopList.innerHTML = '';
+  for (const skin of SKINS) {
+    const owned = cosmetics.owned.includes(skin.id);
+    const equipped = cosmetics.equipped === skin.id;
+    const row = document.createElement('div');
+    row.className = 'shop-row';
+    const swatch = document.createElement('span');
+    swatch.className = 'shop-swatch';
+    swatch.style.background = `radial-gradient(circle at 35% 35%, ${skin.body[0]}, ${skin.body[1]})`;
+    const label = document.createElement('span');
+    label.className = 'shop-name';
+    label.textContent = skin.name;
+    const action = document.createElement('button');
+    action.className = 'btn';
+    if (equipped) {
+      action.textContent = 'Equipped';
+      action.disabled = true;
+    } else if (owned) {
+      action.textContent = 'Equip';
+      action.addEventListener('click', () => {
+        equip(cosmetics, skin.id);
+        saveCosmetics(cosmetics);
+        applyEquippedSkin();
+        game.net.setSkin(cosmetics.equipped); // no-op offline; wired in Task 7
+        sfx.ui();
+        renderShop();
+      });
+    } else {
+      action.textContent = `Buy ✦${skin.price}`;
+      action.disabled = cosmetics.balance < skin.price;
+      action.addEventListener('click', () => {
+        if (buy(cosmetics, skin.id)) {
+          saveCosmetics(cosmetics);
+          sfx.ui();
+          renderShop();
+        }
+      });
+    }
+    row.append(swatch, label, action);
+    els.shopList.appendChild(row);
+  }
+}
+
+const openShop = () => {
+  sfx.ui();
+  openScreen('shop');
+};
+$('btn-shop').addEventListener('click', openShop);
+$('btn-title-shop').addEventListener('click', openShop);
+
+const closeShop = () => {
+  sfx.ui(false);
+  openScreen(backgroundScreen());
+};
+$('btn-close-shop').addEventListener('click', closeShop);
+$('btn-close-shop-2').addEventListener('click', closeShop);
+
 $('btn-reset-stats').addEventListener('click', () => {
   if (!confirm('Reset all career stats and achievements? This cannot be undone.')) return;
   game.stats = resetStats();
@@ -690,6 +783,29 @@ $('btn-reset-stats').addEventListener('click', () => {
   refreshProgress();
   toast('Career reset');
 });
+
+/** Stardust reward toast — mirrors the achievement-unlock toast DOM/class pattern exactly. */
+function showStardustToast(amount: number): void {
+  const el = document.createElement('div');
+  el.className = 'ach-toast stardust';
+  const icon = document.createElement('span');
+  icon.className = 'ach-icon';
+  icon.textContent = '✦';
+  const body = document.createElement('div');
+  const kicker = document.createElement('div');
+  kicker.className = 'ach-kicker';
+  kicker.textContent = 'Stardust earned';
+  const name = document.createElement('div');
+  name.className = 'ach-name';
+  name.textContent = `+${amount}`;
+  body.append(kicker, name);
+  el.append(icon, body);
+  els.achToasts.append(el);
+  setTimeout(() => {
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 400);
+  }, 2600);
+}
 
 // Achievement unlock toasts, shown one at a time so they don't stack into a wall.
 game.onAchievements = (unlocked: Achievement[]) => {

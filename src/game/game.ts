@@ -17,6 +17,7 @@ import {
   type GhostView,
 } from '../render/renderer';
 import { Starfield } from '../render/starfield';
+import { skinById } from './cosmetics';
 import { generateLevel, surfacePoint, updateBodies } from './generator';
 import {
   BALL_RADIUS,
@@ -140,6 +141,8 @@ export class Game {
   /** Fired when the game phase flips (lobby<->playing) so the shell can switch screens. */
   onPhaseChange: (phase: RoomPhase) => void = () => {};
   onKicked: (reason: string) => void = () => {};
+  /** Skin style for the local ball; set by main.ts from the cosmetics module. */
+  ballSkin: { body: [string, string]; glow: string } = { body: ['#ffffff', '#9fc4e8'], glow: 'rgba(190, 235, 255, 0.5)' };
 
   // Career stats
   stats: Stats = loadStats();
@@ -648,12 +651,14 @@ export class Game {
         y: g.render.y,
         state: g.info.state,
         strokes: g.info.strokes,
+        skin: g.info.skin,
+        accent: skinById(g.info.skin ?? 'classic').accent,
       };
       drawGhost(ctx, this.cam, view, this.settings.showGhostNames);
     }
 
     if (this.settings.showTrail) drawTrail(ctx, this.cam, this.ball.trail);
-    drawBall(ctx, this.cam, this.ball, timeSec);
+    drawBall(ctx, this.cam, this.ball, timeSec, this.ballSkin);
 
     if (this.aiming && this.canShoot) this.drawAimGuide(ctx, timeSec);
 
@@ -697,7 +702,7 @@ export class Game {
       points = r.points;
       outcome = r.outcome;
     }
-    drawAim(ctx, this.cam, this.ball.pos, points, outcome, power, dir, timeSec);
+    drawAim(ctx, this.cam, this.ball.pos, points, outcome, power, dir, timeSec, this.settings.colorblind);
   }
 
   private drawStatus(ctx: CanvasRenderingContext2D, w: number, _h: number): void {

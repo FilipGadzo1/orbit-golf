@@ -244,6 +244,26 @@ async function main(): Promise<void> {
   x.client.disconnect();
   y.client.disconnect();
 
+  // ---- cosmetic skin propagates through Presence ----------------------------
+  // A player's equipped skin is a static, low-frequency Presence field (not RoomMeta, not
+  // the pos hot path). Setting it re-tracks and other clients see it on the roster; a
+  // client that never set one surfaces as the 'classic' default.
+  resetMemoryRelays();
+  const p = new Peer('Pat');
+  const q = new Peer('Quinn');
+  p.join('SKINRM');
+  await sleep(6);
+  q.join('SKINRM');
+  await sleep(20);
+  p.client.setSkin('nova');
+  await sleep(20);
+  const pOnQ = q.players.find((pl) => pl.id === p.client.selfId);
+  check('a peer skin propagates to another client', pOnQ?.skin === 'nova', `got ${pOnQ?.skin}`);
+  const qOnQ = q.players.find((pl) => pl.id === q.client.selfId);
+  check('an unset skin defaults to classic', qOnQ?.skin === 'classic', `got ${qOnQ?.skin}`);
+  p.client.disconnect();
+  q.client.disconnect();
+
   console.log('');
   if (failures > 0) {
     console.error(`${failures} check(s) failed.`);

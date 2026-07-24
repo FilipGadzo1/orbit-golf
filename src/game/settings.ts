@@ -2,6 +2,7 @@ export interface Settings {
   playerName: string;
   hue: number;
   volume: number;
+  musicVolume: number;
   soundEnabled: boolean;
   /** Seconds of predicted flight drawn by the aim guide. 0 = off. */
   aimAssist: number;
@@ -13,6 +14,7 @@ export interface Settings {
   /** 0 = potato, 1 = balanced, 2 = pretty. */
   quality: number;
   screenShake: boolean;
+  colorblind: boolean;
 }
 
 const KEY = 'orbit-golf.settings.v1';
@@ -21,6 +23,7 @@ const DEFAULTS: Settings = {
   playerName: '',
   hue: Math.floor(Math.random() * 360),
   volume: 0.6,
+  musicVolume: 0.35,
   soundEnabled: true,
   aimAssist: 2.5,
   gravityIntensity: 1,
@@ -30,6 +33,7 @@ const DEFAULTS: Settings = {
   autoCamera: true,
   quality: 2,
   screenShake: true,
+  colorblind: false,
 };
 
 const ADJECTIVES = ['Cosmic', 'Lunar', 'Solar', 'Astro', 'Nebula', 'Quantum', 'Orbital', 'Stellar'];
