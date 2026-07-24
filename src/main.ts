@@ -42,9 +42,9 @@ function applyEquippedSkin(): void {
   const sk = skinById(cosmetics.equipped);
   game.ballSkin = { body: sk.body, glow: sk.glow };
 }
-applyEquippedSkin();
 const canvas = $<HTMLCanvasElement>('stage');
 const game = new Game(canvas, settings);
+applyEquippedSkin();
 
 const els = {
   hud: $('hud'),
