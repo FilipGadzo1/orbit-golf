@@ -73,25 +73,29 @@ add room state, extend `RoomState`/`RoomMeta` in `protocol.ts` and thread it thr
 `RealtimeClient` and `applyRoomState` — don't add side-channel broadcast events.
 
 Per-hole score reset happens in `applyRoomMeta`: entering a new phase zeroes the card,
-a hole change banks strokes into total and resets. The advance countdown delay is
-`advanceDelayMs` (default 4000), overridable via `setAdvanceDelay` so tests don't wait.
-Scores stay honest as before: multiplayer restart carries strokes + a penalty, and the
-replay button is hidden once a hole is scored.
+a hole change banks strokes into total and resets. Scores stay honest as before:
+multiplayer restart carries strokes + a penalty, and the replay button is hidden once a
+hole is scored.
 
-**Hole advancement is the subtle part** — three rules keep it correct under Supabase's
-async, occasionally-inconsistent Presence:
-1. *Finished-for-which-hole.* A player is "finished" only if their `ready` broadcast or
-   their Presence `doneHole` matches the **current** hole. Trusting a bare `done` flag let
-   the room skip ahead: a client that hadn't yet processed an advance still showed
-   `done=true` from the previous hole. Never reintroduce a hole-agnostic done check.
-2. *Countdown as a settling window.* When everyone appears finished the host starts the
-   countdown; if an unfinished player (re)appears before it fires — e.g. a Presence resync
-   that briefly dropped then restored them — it's cancelled, and advancement is re-verified
-   at fire time. This absorbs transient roster/host blips.
-3. *Self-healing state.* The host re-broadcasts room state on every Presence change, and
+**Hole advancement is manual and host-gated, not automatic.** There is no countdown
+timer. A player presses **Ready** (`markScore` + `markReady`) after finishing a hole; the
+host presses a **Next hole** button that calls `advanceHole()`, which is a no-op unless
+`everyoneReady()` is true. Two rules keep readiness correct under Supabase's async,
+occasionally-inconsistent Presence:
+1. *Finished-for-which-hole.* A player counts as ready only if their `readyIds` broadcast
+   or their Presence `doneHole` matches the **current** hole (`isReady`). Trusting a bare
+   `done` flag let the room skip ahead: a client that hadn't yet processed an advance still
+   showed `done=true` from the previous hole. The stale-done guard is preserved — a
+   `doneHole` from a prior hole never counts as ready for the current one. Never
+   reintroduce a hole-agnostic done check.
+2. *Self-healing state.* The host re-broadcasts room state on every Presence change, and
    election/roster reads go through `mergedPresence()` (own live meta overlaid), so a
    client that missed a `state` broadcast or is transiently absent from its own Presence
-   converges rather than desyncing.
+   converges rather than desyncing. Clients still accept a `state` broadcast only from the
+   elected host — the anti-spoofing boundary is unchanged.
+
+If a player is truly stuck (disconnected, alt-tabbed away), the host can `kick` them
+instead of waiting forever for `everyoneReady()`.
 
 Position broadcasts only stream while the ball is flying (one final send at rest),
 otherwise finished players would saturate the channel's rate budget and starve the
