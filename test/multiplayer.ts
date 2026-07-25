@@ -6,7 +6,7 @@
  * job: host election, the lobby→playing gate, room-config authority, kick, hole
  * advancement, and host reassignment.
  */
-import { RealtimeClient, setAdvanceDelay } from '../src/net/realtime';
+import { RealtimeClient } from '../src/net/realtime';
 import { memoryTransportFactory, memoryTransports, resetMemoryRelays } from '../src/net/transport';
 import type { RoomState } from '../src/net/protocol';
 
@@ -26,7 +26,6 @@ class Peer {
   state: RoomState | null = null;
   seed = 0;
   kicked = false;
-  lastCountdown = 0;
   ghostMoves = 0;
 
   constructor(readonly label: string) {
@@ -41,9 +40,6 @@ class Peer {
         },
         onPos: () => {
           this.ghostMoves++;
-        },
-        onCountdown: (s) => {
-          this.lastCountdown = s;
         },
         onKicked: () => {
           this.kicked = true;
@@ -77,7 +73,6 @@ class Peer {
 
 async function main(): Promise<void> {
   console.log('Orbit Golf — multiplayer (Supabase Realtime logic) checks\n');
-  setAdvanceDelay(40);
 
   // ---- host election & lobby ------------------------------------------------
   resetMemoryRelays();
@@ -140,31 +135,43 @@ async function main(): Promise<void> {
   await sleep(10);
   check('a resting player stops flooding the channel', a.ghostMoves - beforeIdle <= 1, `idle sends delivered=${a.ghostMoves - beforeIdle}`);
 
-  // ---- hole advancement -----------------------------------------------------
-  // Every player keeps "spamming" idle positions after finishing; advancement must still
-  // happen (broadcast-based readiness, not starved by position traffic).
-  a.client.markDone(3, 'sunk');
-  b.client.markDone(4, 'sunk');
+  // ---- hole advancement (manual, host-gated) --------------------------------
+  // Finishing records score only; pressing Ready marks a player done. The host advances
+  // explicitly and only when everyone is ready — no timers, no per-client advance.
+  a.client.markScore(3, 'sunk');
+  b.client.markScore(4, 'sunk');
+  a.client.markReady();
+  b.client.markReady();
   for (let i = 0; i < 10; i++) {
     a.client.sendPos(1, 1, 'sunk', (t += 60));
     b.client.sendPos(2, 2, 'sunk', (t += 60));
   }
   await sleep(20);
-  check('room does not advance until everyone is done', a.hole === 1, `hole=${a.hole}`);
-  c.client.markDone(2, 'sunk');
-  await sleep(120); // > advance delay
-  check('room advances once every player is done', a.hole === 2 && b.hole === 2 && c.hole === 2, `${a.hole}/${b.hole}/${c.hole}`);
+  a.client.advanceHole(); // host, but Lin is not ready yet
+  await sleep(20);
+  check('host cannot advance until everyone is ready', a.hole === 1, `hole=${a.hole}`);
+
+  b.client.advanceHole(); // non-host, everyone-not-ready anyway
+  await sleep(20);
+  check('a non-host cannot advance the room', a.hole === 1, `hole=${a.hole}`);
+
+  c.client.markReady();
+  await sleep(20);
+  a.client.advanceHole(); // host, everyone ready
+  await sleep(20);
+  check('host advances once every player is ready', a.hole === 2 && b.hole === 2 && c.hole === 2, `${a.hole}/${b.hole}/${c.hole}`);
   check('scores carry into the running total after a hole', (a.players.find((p) => p.name === 'Ada')?.total ?? -1) === 3, `total=${a.players.find((p) => p.name === 'Ada')?.total}`);
   check('the done flags reset for the new hole', a.players.every((p) => !p.done), JSON.stringify(a.players.map((p) => p.done)));
 
-  // Advance again with the HOST finishing last — the ordering most prone to a self-stall.
-  b.client.markDone(3, 'sunk');
+  // Non-host readiness alone must not advance; only the host's explicit action does.
+  b.client.markReady();
   c.client.markReady();
   await sleep(30);
-  check('room waits while the host is still playing', a.hole === 2, `hole=${a.hole}`);
-  a.client.markDone(2, 'sunk'); // host finishes last
-  await sleep(120);
-  check('room advances when the host finishes last', a.hole === 3 && b.hole === 3 && c.hole === 3, `${a.hole}/${b.hole}/${c.hole}`);
+  check('room stays put while the host has not advanced', a.hole === 2, `hole=${a.hole}`);
+  a.client.markReady();
+  a.client.advanceHole();
+  await sleep(20);
+  check('host advances the room on its explicit action', a.hole === 3 && b.hole === 3 && c.hole === 3, `${a.hole}/${b.hole}/${c.hole}`);
 
   // ---- kick -----------------------------------------------------------------
   const graceId = a.players.find((p) => p.name === 'Grace')?.id ?? '';
@@ -209,16 +216,22 @@ async function main(): Promise<void> {
   // Slow stops receiving room-state broadcasts — it will never learn the hole advanced.
   memoryTransports.get(slow.client.selfId)!.blockedEvents.add('state');
 
-  // Both finish hole 1 → room advances to hole 2 (Slow is stuck on hole 1 with done-for-1).
-  slow.client.markDone(3, 'sunk');
-  host.client.markDone(3, 'sunk');
-  await sleep(120);
+  // Both finish + ready hole 1 → host advances to hole 2 (Slow is blocked from 'state').
+  slow.client.markScore(3, 'sunk');
+  slow.client.markReady();
+  host.client.markScore(3, 'sunk');
+  host.client.markReady();
+  await sleep(20);
+  host.client.advanceHole();
+  await sleep(20);
   check('host advances to hole 2', host.hole === 2, `host hole=${host.hole}`);
   check('the stuck player is still on hole 1', slow.hole === 1, `slow hole=${slow.hole}`);
 
-  // Host finishes hole 2. Slow has NOT played hole 2 (its done is for hole 1) → NO skip.
-  host.client.markDone(2, 'sunk');
-  await sleep(120);
+  // Host readies hole 2. Slow's doneHole is still 1 (stale) → host cannot advance.
+  host.client.markScore(2, 'sunk');
+  host.client.markReady();
+  host.client.advanceHole();
+  await sleep(20);
   check('the room does NOT skip ahead while a player is behind', host.hole === 2, `host hole=${host.hole}`);
 
   // Recovery: unblock Slow; the host re-asserts state on the next Presence change.
@@ -226,9 +239,12 @@ async function main(): Promise<void> {
   slow.client.markStrokes(1);
   await sleep(30);
   check('a lagging player catches up to the current hole', slow.hole === 2, `slow hole=${slow.hole}`);
-  slow.client.markDone(4, 'sunk');
-  await sleep(120);
-  check('the room advances once the lagging player finishes', host.hole === 3 && slow.hole === 3, `${host.hole}/${slow.hole}`);
+  slow.client.markScore(4, 'sunk');
+  slow.client.markReady();
+  await sleep(20);
+  host.client.advanceHole();
+  await sleep(20);
+  check('the room advances once the lagging player finishes and the host advances', host.hole === 3 && slow.hole === 3, `${host.hole}/${slow.hole}`);
 
   host.client.disconnect();
   slow.client.disconnect();

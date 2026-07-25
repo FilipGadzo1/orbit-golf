@@ -58,6 +58,7 @@ export interface HudState {
   netStatus: NetStatus;
   room: string;
   waiting: boolean;
+  ready: number;
   phase: RoomPhase;
   isHost: boolean;
   canRestart: boolean;
@@ -130,7 +131,6 @@ export class Game {
   hostId = '';
   roomConfig: RoomConfig = { ...DEFAULT_ROOM_CONFIG };
   private waitingForOthers = false;
-  private countdown = 0;
 
   onHoleComplete: (r: HoleResult) => void = () => {};
   onPlayersChanged: (p: PlayerInfo[]) => void = () => {};
@@ -141,6 +141,8 @@ export class Game {
   /** Fired when the game phase flips (lobby<->playing) so the shell can switch screens. */
   onPhaseChange: (phase: RoomPhase) => void = () => {};
   onKicked: (reason: string) => void = () => {};
+  /** Fired when the room rolls to a new hole while already playing, so the UI can leave the waiting panel. */
+  onAdvance: () => void = () => {};
   /** Skin style for the local ball; set by main.ts from the cosmetics module. */
   ballSkin: { body: [string, string]; glow: string } = { body: ['#ffffff', '#9fc4e8'], glow: 'rgba(190, 235, 255, 0.5)' };
 
@@ -183,10 +185,6 @@ export class Game {
         g.target.y = y;
         g.info.state = state as PlayerInfo['state'];
         g.seen = performance.now();
-      },
-      onCountdown: (s) => {
-        // 0 = the host cancelled the countdown (a player turned out not to be finished).
-        this.countdown = s > 0 ? performance.now() + s * 1000 : 0;
       },
       onKicked: (reason) => {
         this.resetMultiplayerState();
@@ -370,8 +368,7 @@ export class Game {
     this.announce();
 
     if (this.net.connected) {
-      this.net.markDone(this.strokes, outcome === 'sunk' ? 'sunk' : 'lost');
-      this.waitingForOthers = true;
+      this.net.markScore(this.strokes, outcome === 'sunk' ? 'sunk' : 'lost');
     }
 
     this.onHoleComplete({
@@ -708,11 +705,7 @@ export class Game {
   private drawStatus(ctx: CanvasRenderingContext2D, w: number, _h: number): void {
     const now = performance.now();
     let text = '';
-    if (this.countdown > now) {
-      text = `Next hole in ${Math.ceil((this.countdown - now) / 1000)}…`;
-    } else if (this.waitingForOthers) {
-      text = 'Waiting for other players…';
-    } else if (now < this.statusUntil) {
+    if (now < this.statusUntil) {
       text = this.statusMessage;
     }
     if (!text) return;
@@ -888,10 +881,12 @@ export class Game {
     const holeChanged = state.phase === 'playing' && state.hole !== prevHole;
 
     if (enteredPlay || holeChanged) {
-      this.countdown = 0;
       this.waitingForOthers = false;
       this.loadHole(state.hole);
-      if (holeChanged && !enteredPlay) sfx.levelUp();
+      if (holeChanged && !enteredPlay) {
+        this.onAdvance();
+        sfx.levelUp();
+      }
     }
 
     if (state.phase !== prevPhase) {
@@ -910,7 +905,6 @@ export class Game {
     this.hostId = '';
     this.roomConfig = { ...DEFAULT_ROOM_CONFIG };
     this.waitingForOthers = false;
-    this.countdown = 0;
   }
 
   // ---- host actions (no-ops unless the server agrees you're the host) ----------
@@ -991,6 +985,7 @@ export class Game {
       netStatus: this.net.status,
       room: this.net.room,
       waiting: this.waitingForOthers,
+      ready: this.players.filter((p) => p.done).length,
       phase: this.phase,
       isHost: this.isHost,
       canRestart: this.canRestart,

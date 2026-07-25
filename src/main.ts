@@ -1021,7 +1021,6 @@ if (memoryNet) {
         onWelcome: (m) => (last = m.state),
         onState: (s) => (last = s),
         onPos: () => {},
-        onCountdown: () => {},
         onKicked: () => (kicked = true),
         onStatus: () => {},
       });
@@ -1036,7 +1035,10 @@ if (memoryNet) {
     kicked: (n: string) => peers[n]?.kicked() ?? false,
     start: (n: string) => peers[n]?.c.start(),
     setConfig: (n: string, cfg: unknown) => peers[n]?.c.setConfig(cfg as never),
-    markDone: (n: string, s: number, r: 'sunk' | 'lost') => peers[n]?.c.markDone(s, r),
+    markDone: (n: string, s: number, r: 'sunk' | 'lost') => {
+      peers[n]?.c.markScore(s, r);
+      peers[n]?.c.markReady();
+    },
     sendPos: (n: string, x: number, y: number, s: string) => peers[n]?.c.sendPos(x, y, s, performance.now() + Math.random() * 1e6),
     disconnect: (n: string) => peers[n]?.c.disconnect(),
   };
