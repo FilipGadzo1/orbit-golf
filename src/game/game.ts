@@ -925,6 +925,11 @@ export class Game {
     this.net.setConfig(partial);
   }
 
+  /** Host-only: roll the room to the next hole once everyone is ready (gated in RealtimeClient). */
+  advanceRoomHole(): void {
+    this.net.advanceHole();
+  }
+
   /** Effective aim-guide seconds after applying any room policy. */
   private effectiveAimAssist(): number {
     if (!this.net.connected) return this.settings.aimAssist;

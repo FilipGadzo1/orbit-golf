@@ -277,6 +277,20 @@ body {
   color: var(--accent);
 }
 
+.hud-ready {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(6, 10, 22, 0.72);
+  border: 1px solid var(--panel-line);
+  font-family: var(--display);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------------------------------------------------------------- hint bar */
 
 .hint-bar {
@@ -663,6 +677,64 @@ body {
   gap: 10px;
   padding: 16px 22px;
   border-top: 1px solid var(--panel-line);
+}
+
+/* --------------------------------------------------------------- waiting */
+
+.wait-group-title {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.wait-group-title:not(:first-child) {
+  margin-top: 16px;
+}
+
+.wait-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wait-list:empty::after {
+  content: '—';
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.wait-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.wait-list .chip {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.wait-list .name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wait-list .you {
+  color: var(--accent-2);
+  font-weight: 700;
+}
+
+.wait-msg {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 /* ------------------------------------------------------------------- shop */
