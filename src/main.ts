@@ -120,6 +120,7 @@ function openScreen(screen: Screen): void {
   show(els.hud, inGame);
   if (screen === 'stats') renderStats();
   if (screen === 'shop') renderShop();
+  if (screen === 'wait') renderWait();
   if (screen === 'multi') updateMultiConfigNotice();
   canvas.style.cursor = screen === 'game' ? 'crosshair' : 'default';
 }
@@ -145,7 +146,7 @@ function updateMultiConfigNotice(): void {
 
 /** Where closing a sheet should return you to. */
 function backgroundScreen(): Screen {
-  return pendingResult ? 'result' : inGame ? 'game' : 'title';
+  return pendingResult ? 'result' : game.hud().waiting ? 'wait' : inGame ? 'game' : 'title';
 }
 
 function startGame(seedText?: string): void {
@@ -999,8 +1000,14 @@ window.addEventListener('keydown', (e) => {
     case 'n':
       if (inGame && !els.result.classList.contains('hidden')) {
         pendingResult = null;
-        game.nextHole();
-        openScreen('game');
+        const mp = game.net.connected;
+        game.nextHole(); // MP: markReady + waitingForOthers; solo: advance
+        if (mp) {
+          renderWait();
+          openScreen('wait');
+        } else {
+          openScreen('game');
+        }
       }
       break;
     case 'x':
