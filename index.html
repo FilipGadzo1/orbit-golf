@@ -58,6 +58,8 @@
             <ul id="score-list"></ul>
           </div>
 
+          <div id="hud-ready" class="hud-ready hidden"></div>
+
           <div class="hint-bar panel" id="hint-bar">
             <span><b>Drag</b> from the ball &amp; release to putt</span>
             <span class="sep"></span>
@@ -296,6 +298,25 @@
           </div>
           <footer class="sheet-foot">
             <button class="btn btn-primary" id="btn-close-shop-2">Done</button>
+          </footer>
+        </div>
+      </div>
+
+      <!-- ============================ waiting panel ============================ -->
+      <div id="wait" class="overlay hidden">
+        <div class="panel sheet sheet-narrow">
+          <header class="sheet-head"><h2>Hole complete</h2></header>
+          <div class="sheet-body">
+            <section>
+              <h3 class="wait-group-title">Ready</h3>
+              <ul id="wait-ready" class="wait-list"></ul>
+              <h3 class="wait-group-title">Still playing</h3>
+              <ul id="wait-playing" class="wait-list"></ul>
+            </section>
+          </div>
+          <footer class="sheet-foot">
+            <span id="wait-msg" class="wait-msg"></span>
+            <button id="btn-advance" class="btn btn-primary" disabled>Next hole</button>
           </footer>
         </div>
       </div>

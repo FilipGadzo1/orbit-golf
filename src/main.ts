@@ -84,6 +84,12 @@ const els = {
   shop: $('shop'),
   shopBalance: $('shop-balance'),
   shopList: $('shop-list'),
+  wait: $('wait'),
+  waitReady: $<HTMLUListElement>('wait-ready'),
+  waitPlaying: $<HTMLUListElement>('wait-playing'),
+  waitMsg: $('wait-msg'),
+  btnAdvance: $<HTMLButtonElement>('btn-advance'),
+  hudReady: $('hud-ready'),
 };
 
 let toastTimer = 0;
@@ -96,7 +102,7 @@ function toast(message: string): void {
 
 // ------------------------------------------------------------------ screens
 
-type Screen = 'title' | 'game' | 'result' | 'settings' | 'multi' | 'stats' | 'shop';
+type Screen = 'title' | 'game' | 'result' | 'settings' | 'multi' | 'stats' | 'shop' | 'wait';
 let inGame = false;
 
 function show(el: HTMLElement, visible: boolean): void {
@@ -110,9 +116,11 @@ function openScreen(screen: Screen): void {
   show(els.multi, screen === 'multi');
   show(els.stats, screen === 'stats');
   show(els.shop, screen === 'shop');
+  show(els.wait, screen === 'wait');
   show(els.hud, inGame);
   if (screen === 'stats') renderStats();
   if (screen === 'shop') renderShop();
+  if (screen === 'wait') renderWait();
   if (screen === 'multi') updateMultiConfigNotice();
   canvas.style.cursor = screen === 'game' ? 'crosshair' : 'default';
 }
@@ -138,7 +146,7 @@ function updateMultiConfigNotice(): void {
 
 /** Where closing a sheet should return you to. */
 function backgroundScreen(): Screen {
-  return pendingResult ? 'result' : inGame ? 'game' : 'title';
+  return pendingResult ? 'result' : game.hud().waiting ? 'wait' : inGame ? 'game' : 'title';
 }
 
 function startGame(seedText?: string): void {
@@ -226,7 +234,7 @@ game.onHoleComplete = (r) => {
     const nextTier = tierFor(r.hole + 1);
     $('result-next').textContent =
       game.net.connected
-        ? 'Waiting for the rest of the lobby…'
+        ? "Press Ready when you're done."
         : `Up next: hole ${r.hole + 1} · ${nextTier}`;
     $<HTMLButtonElement>('btn-next').textContent = game.net.connected ? 'Ready' : 'Next hole';
     // The hole is already scored with the lobby — replaying it would rewrite that score.
@@ -238,8 +246,50 @@ game.onHoleComplete = (r) => {
 $('btn-next').addEventListener('click', () => {
   sfx.ui();
   pendingResult = null;
-  game.nextHole();
-  openScreen('game');
+  const mp = game.net.connected;
+  game.nextHole(); // MP: markReady + waitingForOthers; solo: advance
+  if (mp) {
+    renderWait();
+    openScreen('wait');
+  } else {
+    openScreen('game');
+  }
+});
+
+function renderWait(): void {
+  const players = game.players;
+  const ready = players.filter((p) => p.done);
+  const playing = players.filter((p) => !p.done);
+  const fill = (ul: HTMLElement, list: typeof players) => {
+    ul.innerHTML = '';
+    for (const p of list) {
+      const li = document.createElement('li');
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.style.background = `hsl(${p.hue}, 95%, 68%)`;
+      const name = document.createElement('span');
+      name.className = `name${p.id === game.net.selfId ? ' you' : ''}`;
+      name.textContent = p.name;
+      li.append(chip, name);
+      ul.append(li);
+    }
+  };
+  fill(els.waitReady, ready);
+  fill(els.waitPlaying, playing);
+  const allReady = players.length > 0 && playing.length === 0;
+  const host = game.isHost;
+  show(els.btnAdvance, host);
+  els.btnAdvance.disabled = !allReady;
+  els.waitMsg.textContent = host
+    ? allReady
+      ? 'Everyone is ready.'
+      : 'Waiting for all players to be ready…'
+    : 'Waiting for the host to start the next hole.';
+}
+
+$('btn-advance').addEventListener('click', () => {
+  sfx.ui();
+  game.advanceRoomHole();
 });
 
 $('btn-retry').addEventListener('click', () => {
@@ -571,6 +621,12 @@ function renderScoreboard(players: PlayerInfo[]): void {
 
 game.onPlayersChanged = (players) => {
   renderScoreboard(players);
+  if (!els.wait.classList.contains('hidden')) renderWait();
+
+  const h = game.hud();
+  const showReady = game.net.connected && h.phase === 'playing' && !h.waiting && players.length > 1;
+  show(els.hudReady, showReady);
+  if (showReady) els.hudReady.textContent = `${h.ready}/${players.length} ready`;
 
   // Remember everyone but yourself as a recent player. The lobby list itself is
   // rendered by renderLobby (game.onRoomState), which has the host/kick context.
@@ -580,6 +636,11 @@ game.onPlayersChanged = (players) => {
     saveFriends(friends);
     renderFriends();
   }
+};
+
+game.onAdvance = () => {
+  pendingResult = null;
+  openScreen('game');
 };
 
 // -------------------------------------------------------------- career stats
@@ -939,8 +1000,14 @@ window.addEventListener('keydown', (e) => {
     case 'n':
       if (inGame && !els.result.classList.contains('hidden')) {
         pendingResult = null;
-        game.nextHole();
-        openScreen('game');
+        const mp = game.net.connected;
+        game.nextHole(); // MP: markReady + waitingForOthers; solo: advance
+        if (mp) {
+          renderWait();
+          openScreen('wait');
+        } else {
+          openScreen('game');
+        }
       }
       break;
     case 'x':
@@ -1021,7 +1088,6 @@ if (memoryNet) {
         onWelcome: (m) => (last = m.state),
         onState: (s) => (last = s),
         onPos: () => {},
-        onCountdown: () => {},
         onKicked: () => (kicked = true),
         onStatus: () => {},
       });
@@ -1036,7 +1102,10 @@ if (memoryNet) {
     kicked: (n: string) => peers[n]?.kicked() ?? false,
     start: (n: string) => peers[n]?.c.start(),
     setConfig: (n: string, cfg: unknown) => peers[n]?.c.setConfig(cfg as never),
-    markDone: (n: string, s: number, r: 'sunk' | 'lost') => peers[n]?.c.markDone(s, r),
+    markDone: (n: string, s: number, r: 'sunk' | 'lost') => {
+      peers[n]?.c.markScore(s, r);
+      peers[n]?.c.markReady();
+    },
     sendPos: (n: string, x: number, y: number, s: string) => peers[n]?.c.sendPos(x, y, s, performance.now() + Math.random() * 1e6),
     disconnect: (n: string) => peers[n]?.c.disconnect(),
   };

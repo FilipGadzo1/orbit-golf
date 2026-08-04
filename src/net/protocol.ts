@@ -73,7 +73,7 @@ export interface RoomMeta {
 }
 
 /** Broadcast event names on the room channel. */
-export type BroadcastEvent = 'state' | 'pos' | 'kick' | 'countdown' | 'ready';
+export type BroadcastEvent = 'state' | 'pos' | 'kick' | 'ready';
 
 export interface StatePayload extends RoomMeta {
   /** Sender id; receivers accept state only from the currently-elected host. */
@@ -87,9 +87,6 @@ export interface PosPayload {
 }
 export interface KickPayload {
   id: string;
-}
-export interface CountdownPayload {
-  seconds: number;
 }
 /** A player signalling they've finished the given hole (immediate, reliable path). */
 export interface ReadyPayload {

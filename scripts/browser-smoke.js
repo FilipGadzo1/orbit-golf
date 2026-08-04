@@ -352,13 +352,45 @@ try {
   check('a blocked restart does not add a stroke', blocked.strokes === 2, `strokes=${blocked.strokes}`);
   await a.page.evaluate(() => window.__game.setRoomConfig({ allowRestart: true }));
 
-  // Host advances the hole once everyone is done.
+  // Manual advancement: each player presses Ready after finishing, then the host
+  // presses Next hole once everyone is ready.
   const holeBefore = await a.page.evaluate(() => window.__game.holeIndex);
+
+  // Sink the real (host) client's ball so it reaches the result card and can press Ready.
+  await a.page.evaluate(() => {
+    const g = window.__game;
+    const cup = g.__surfacePoint(g.level.bodies[g.level.holeBody], g.level.holeAngle, 26);
+    g.ball.pos.x = cup.x;
+    g.ball.pos.y = cup.y;
+    g.ball.vel.x = 0;
+    g.ball.vel.y = 0;
+    g.ball.restingOn = -1;
+    g.ball.state = 'flying';
+  });
+  await a.page.waitForTimeout(3000);
+  check('the host sees the result card after sinking', await a.page.locator('#result').isVisible());
+
+  await a.page.locator('#btn-next').click();
+  await a.page.waitForTimeout(300);
+  check('pressing Ready opens the waiting panel', await a.page.locator('#wait').isVisible());
+  check(
+    'the host Next hole button is disabled until everyone is ready',
+    await a.page.locator('#btn-advance').isDisabled(),
+  );
+
+  // Drive the peer to finish and mark ready too.
   await a.page.evaluate(() => window.__orbitPeer.markDone('Buddy', 3, 'sunk'));
-  await a.page.evaluate(() => window.__game.net.markDone(3, 'sunk'));
-  await a.page.waitForTimeout(5000);
+  await a.page.waitForTimeout(500);
+  check(
+    'the Next hole button unlocks once everyone is ready',
+    !(await a.page.locator('#btn-advance').isDisabled()),
+  );
+
+  await a.page.locator('#btn-advance').click();
+  await a.page.waitForTimeout(700);
   const holeAfter = await a.page.evaluate(() => window.__game.holeIndex);
-  check('room advances when everyone is done', holeAfter === holeBefore + 1, `${holeBefore} -> ${holeAfter}`);
+  check('the host advances the room via Next hole', holeAfter === holeBefore + 1, `${holeBefore} -> ${holeAfter}`);
+  check('the waiting panel closes after advancing', !(await a.page.locator('#wait').isVisible()));
 
   // Host kicks the peer.
   await a.page.evaluate(() => {

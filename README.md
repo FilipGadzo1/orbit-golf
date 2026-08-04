@@ -123,8 +123,11 @@ The first player in is the **host** (shown with a ★ crown) and controls:
 Host role auto-transfers to the earliest remaining player if the host leaves. Because the
 host is elected deterministically from Presence, every client agrees who it is, and
 clients only accept room state from the current host — so a modified client can't start,
-kick, or change settings for others. Once playing, the room advances to the next hole when
-every player has holed out or pressed Ready.
+kick, or change settings for others. Once playing, each player presses **Ready** after
+finishing a hole, which opens a waiting panel listing who's Ready and who's still playing;
+a still-playing player also sees an "X/Y ready" indicator in the HUD. The **host** advances
+everyone to the next hole with a **Next hole** button, which only unlocks once every player
+is Ready — if someone gets truly stuck, the host can kick them to unblock the room.
 
 Scoring is kept honest in a lobby: restarting a hole (`R`) carries your strokes over and
 adds a penalty stroke instead of wiping the slate, and once you've holed out the
